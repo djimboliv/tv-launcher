@@ -1,4 +1,4 @@
-name: Build Premium TV Launcher UI
+name: Build Philips Family Photo Launcher v6
 
 on:
   push:
@@ -8,7 +8,7 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Генерация исходников и сборка APK
+      - name: Сборка APK с поддержкой своего фото и рабочих кнопок
         run: |
           mkdir -p src/com/custom/philipslauncher res/xml build/classes
 
@@ -26,21 +26,21 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="4"
-              android:versionName="4.0">
+              android:versionCode="6"
+              android:versionName="6.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
               <uses-feature android:name="android.software.leanback" android:required="false" />
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
               <application
-                  android:label="Premium TV Home"
+                  android:label="Philips Family Home"
                   android:hardwareAccelerated="true"
+                  android:requestLegacyExternalStorage="true"
                   android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
                   <activity
                       android:name=".MainActivity"
                       android:launchMode="singleTask"
-                      android:clearTaskOnLaunch="true"
-                      android:stateNotNeeded="true"
                       android:exported="true"
                       android:screenOrientation="landscape">
                       <intent-filter>
@@ -51,7 +51,6 @@ jobs:
                       </intent-filter>
                   </activity>
 
-                  <!-- Системный перехватчик кнопки Netflix и других кнопок пульта Philips -->
                   <service
                       android:name=".KeyInterceptService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -72,8 +71,8 @@ jobs:
 
           import android.accessibilityservice.AccessibilityService;
           import android.content.Intent;
-          import android.content.pm.ApplicationInfo;
           import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
           import android.view.KeyEvent;
           import android.view.accessibility.AccessibilityEvent;
           import java.util.List;
@@ -90,18 +89,23 @@ jobs:
                   int code = event.getKeyCode();
                   int scan = event.getScanCode();
 
-                  // Коды кнопки Netflix на пультах Philips (KeyCode 188, 191, либо аппаратные скан-коды)
-                  boolean isNetflixKey = (code == KeyEvent.KEYCODE_BUTTON_1 || code == 188 || code == 191 || scan == 380 || scan == 412 || scan == 217);
-                  // Коды соседней рекламной кнопки (Prime Video / Rakuten / IVI)
-                  boolean isSecondPromoKey = (code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 || code == 189 || code == 190);
+                  if (code == KeyEvent.KEYCODE_HOME) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                          Intent home = new Intent(this, MainActivity.class);
+                          home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                          startActivity(home);
+                      }
+                      return true;
+                  }
 
-                  if (isNetflixKey) {
+                  if (code == KeyEvent.KEYCODE_BUTTON_1 || code == 188 || code == 191 || scan == 380 || scan == 412 || scan == 217 || scan == 139) {
                       if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                           launchByKeyword("v2ray");
                       }
                       return true;
                   }
-                  if (isSecondPromoKey) {
+
+                  if (code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 || code == KeyEvent.KEYCODE_BUTTON_4 || code == 189 || code == 190) {
                       if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                           launchByKeyword("zona");
                       }
@@ -112,18 +116,18 @@ jobs:
 
               private void launchByKeyword(String keyword) {
                   PackageManager pm = getPackageManager();
-                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
-                  for (ApplicationInfo app : apps) {
-                      String pkg = app.packageName;
-                      String label = app.loadLabel(pm).toString();
+                  Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+                  List<ResolveInfo> list = pm.queryIntentActivities(mainIntent, 0);
+                  for (ResolveInfo info : list) {
+                      String pkg = info.activityInfo.packageName;
+                      String name = info.activityInfo.name;
+                      String label = info.loadLabel(pm).toString();
                       if (pkg.toLowerCase().contains(keyword) || label.toLowerCase().contains(keyword)) {
-                          Intent i = pm.getLeanbackLaunchIntentForPackage(pkg);
-                          if (i == null) i = pm.getLaunchIntentForPackage(pkg);
-                          if (i != null) {
-                              i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                              startActivity(i);
-                              return;
-                          }
+                          Intent launch = new Intent(Intent.ACTION_MAIN);
+                          launch.setClassName(pkg, name);
+                          launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                          startActivity(launch);
+                          return;
                       }
                   }
               }
@@ -134,19 +138,18 @@ jobs:
           package com.custom.philipslauncher;
 
           import android.app.Activity;
-          import android.app.ActivityManager;
-          import android.content.Context;
+          import android.content.ComponentName;
           import android.content.Intent;
-          import android.content.pm.ApplicationInfo;
           import android.content.pm.PackageManager;
+          import android.content.pm.ResolveInfo;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
           import android.graphics.Color;
           import android.graphics.Typeface;
           import android.graphics.drawable.Drawable;
           import android.graphics.drawable.GradientDrawable;
           import android.net.Uri;
           import android.os.Bundle;
-          import android.os.Environment;
-          import android.os.StatFs;
           import android.provider.Settings;
           import android.text.TextUtils;
           import android.view.Gravity;
@@ -158,24 +161,30 @@ jobs:
           import android.widget.LinearLayout;
           import android.widget.TextView;
           import android.widget.Toast;
+          import java.io.File;
           import java.text.SimpleDateFormat;
           import java.util.ArrayList;
           import java.util.Collections;
           import java.util.Comparator;
           import java.util.Date;
+          import java.util.HashSet;
           import java.util.List;
           import java.util.Locale;
+          import java.util.Set;
 
           public class MainActivity extends Activity {
               private PackageManager pm;
-              private String v2rayPkg = null;
-              private String zonaPkg = null;
+              private AppEntry v2rayApp = null;
+              private AppEntry zonaApp = null;
               private LinearLayout appsStrip;
-              private TextView topTimeView, topDateView, bigClockHour, bigClockMin, ramWidgetText, storageWidgetText;
+              private TextView topTimeView, topDateView;
+              private ImageView bgWallpaper;
+              private boolean isLoadedOnce = false;
 
               private static class AppEntry {
                   String label;
                   String pkg;
+                  String activityName;
                   Drawable icon;
                   Drawable banner;
                   boolean isPriority;
@@ -185,292 +194,238 @@ jobs:
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   pm = getPackageManager();
-                  buildPremiumUi();
+                  buildUi();
+                  loadCustomWallpaper();
+                  loadAppsRow();
+                  isLoadedOnce = true;
               }
 
               @Override
               protected void onResume() {
                   super.onResume();
-                  updateWidgets();
-                  loadAppsRow();
+                  updateClock();
+                  loadCustomWallpaper();
+                  if (!isLoadedOnce || appsStrip.getChildCount() == 0) {
+                      loadAppsRow();
+                      isLoadedOnce = true;
+                  }
               }
 
               @Override
               public void onBackPressed() {}
 
               @Override
-              public boolean onKeyDown(int keyCode, KeyEvent event) {
-                  if (keyCode == KeyEvent.KEYCODE_BUTTON_1 || keyCode == 188 || keyCode == 191) {
-                      launchApp(v2rayPkg, "v2rayTun");
+              public boolean dispatchKeyEvent(KeyEvent event) {
+                  int code = event.getKeyCode();
+                  int scan = event.getScanCode();
+
+                  if (code == KeyEvent.KEYCODE_BUTTON_1 || code == 188 || code == 191 || scan == 380 || scan == 412 || scan == 217) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                          launchEntry(v2rayApp, "v2rayTun");
+                      }
                       return true;
                   }
-                  if (keyCode == KeyEvent.KEYCODE_BUTTON_2 || keyCode == KeyEvent.KEYCODE_BUTTON_3 || keyCode == 189 || keyCode == 190) {
-                      launchApp(zonaPkg, "Zona");
+
+                  if (code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 || code == 189 || code == 190) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                          launchEntry(zonaApp, "Zona");
+                      }
                       return true;
                   }
-                  return super.onKeyDown(keyCode, event);
+
+                  if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                      View focused = getCurrentFocus();
+                      if (focused != null && focused.getTag() instanceof Runnable) {
+                          if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0) {
+                              Object longTag = focused.getTag(android.R.id.summary);
+                              if (longTag instanceof Runnable) ((Runnable) longTag).run();
+                              return true;
+                          }
+                          if (event.getAction() == KeyEvent.ACTION_UP && event.getRepeatCount() == 0) {
+                              ((Runnable) focused.getTag()).run();
+                              return true;
+                          }
+                          return true;
+                      }
+                  }
+                  return super.dispatchKeyEvent(event);
               }
 
-              private void buildPremiumUi() {
-                  // Глубокий живописный фон в стиле горного озера со скриншота
+              // Загружаем ваше семейное фото из памяти ТВ без необходимости пересобирать APK
+              private void loadCustomWallpaper() {
+                  try {
+                      File extDir = getExternalFilesDir(null);
+                      String[] paths = new String[] {
+                          extDir != null ? new File(extDir, "wallpaper.jpg").getAbsolutePath() : "",
+                          "/sdcard/Android/data/com.custom.philipslauncher/files/wallpaper.jpg",
+                          "/sdcard/wallpaper.jpg",
+                          "/data/local/tmp/wallpaper.jpg"
+                      };
+                      for (String path : paths) {
+                          if (path.isEmpty()) continue;
+                          File f = new File(path);
+                          if (f.exists() && f.length() > 0) {
+                              Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
+                              if (bmp != null) {
+                                  bgWallpaper.setImageBitmap(bmp);
+                                  return;
+                              }
+                          }
+                      }
+                  } catch (Exception ignored) {}
+              }
+
+              private void buildUi() {
                   FrameLayout screen = new FrameLayout(this);
-                  GradientDrawable scenicBg = new GradientDrawable(
-                          GradientDrawable.Orientation.TL_BR,
-                          new int[]{Color.parseColor("#0F2027"), Color.parseColor("#203A43"), Color.parseColor("#2C5364")});
-                  screen.setBackground(scenicBg);
+                  screen.setBackgroundColor(Color.parseColor("#1A1025"));
 
-                  LinearLayout mainHorizontal = new LinearLayout(this);
-                  mainHorizontal.setOrientation(LinearLayout.HORIZONTAL);
-                  mainHorizontal.setPadding(40, 32, 48, 32);
+                  // 1. Полноэкранная фотография (без центральных виджетов, чтобы лица были полностью открыты!)
+                  bgWallpaper = new ImageView(this);
+                  bgWallpaper.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                  screen.addView(bgWallpaper, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-                  // 1. ЛЕВАЯ БОКОВАЯ ПАНЕЛЬ ИКОНОК (как на скриншоте)
-                  LinearLayout sidebar = new LinearLayout(this);
-                  sidebar.setOrientation(LinearLayout.VERTICAL);
-                  sidebar.setGravity(Gravity.CENTER_HORIZONTAL);
-                  sidebar.setPadding(8, 12, 28, 12);
+                  // Мягкий градиент только в самом низу и самом верху (середина экрана на 100% прозрачна для фото)
+                  View topBottomShade = new View(this);
+                  GradientDrawable vignette = new GradientDrawable(
+                          GradientDrawable.Orientation.TOP_BOTTOM,
+                          new int[]{Color.parseColor("#77000000"), Color.TRANSPARENT, Color.TRANSPARENT, Color.parseColor("#CC090D16")});
+                  topBottomShade.setBackground(vignette);
+                  screen.addView(topBottomShade, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-                  View greenMenuDot = createSidebarIcon("❖", "#00C853", true, new Runnable() {
-                      @Override public void run() { Toast.makeText(MainActivity.this, "Все приложения", Toast.LENGTH_SHORT).show(); }
-                  });
-                  View sideVpn = createSidebarIcon("VPN", "#263238", false, new Runnable() {
-                      @Override public void run() { launchApp(v2rayPkg, "v2rayTun"); }
-                  });
-                  View sideCinema = createSidebarIcon("▶", "#263238", false, new Runnable() {
-                      @Override public void run() { launchApp(zonaPkg, "Zona"); }
-                  });
-                  View sideSettings = createSidebarIcon("⚙", "#263238", false, new Runnable() {
-                      @Override public void run() { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
-                  });
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(56, 36, 56, 36);
+                  root.setClipChildren(false);
+                  root.setClipToPadding(false);
 
-                  sidebar.addView(greenMenuDot);
-                  sidebar.addView(sideVpn);
-                  sidebar.addView(sideCinema);
-                  sidebar.addView(sideSettings);
-                  mainHorizontal.addView(sidebar, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT));
-
-                  // 2. ПРАВАЯ ОСНОВНАЯ ОБЛАСТЬ
-                  LinearLayout contentArea = new LinearLayout(this);
-                  contentArea.setOrientation(LinearLayout.VERTICAL);
-                  contentArea.setClipChildren(false);
-                  contentArea.setClipToPadding(false);
-
-                  // ВЕРХНЯЯ ПАНЕЛЬ: Таблетки Settings, Network, RU слева и часы справа
+                  // ВЕРХНЯЯ АККУРАТНАЯ ПАНЕЛЬ: Кнопки быстрых настроек слева и часы справа
                   LinearLayout topBar = new LinearLayout(this);
                   topBar.setOrientation(LinearLayout.HORIZONTAL);
                   topBar.setGravity(Gravity.CENTER_VERTICAL);
 
-                  topBar.addView(createTopPill("⚙  Settings", new Runnable() {
+                  topBar.addView(createTopPill("🛡  v2rayTun VPN", new Runnable() {
+                      @Override public void run() { launchEntry(v2rayApp, "v2rayTun"); }
+                  }));
+                  topBar.addView(createTopPill("🎬  Zona Кино", new Runnable() {
+                      @Override public void run() { launchEntry(zonaApp, "Zona"); }
+                  }));
+                  topBar.addView(createTopPill("⚙  Настройки ТВ", new Runnable() {
                       @Override public void run() { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
                   }));
-                  topBar.addView(createTopPill("🌐  Network", new Runnable() {
+                  topBar.addView(createTopPill("🌐  Wi-Fi / Сеть", new Runnable() {
                       @Override public void run() { startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)); }
                   }));
-                  topBar.addView(createTopPill("🛡  v2rayTun VPN", new Runnable() {
-                      @Override public void run() { launchApp(v2rayPkg, "v2rayTun"); }
-                  }));
 
-                  View spacer = new View(this);
-                  topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+                  View hSpacer = new View(this);
+                  topBar.addView(hSpacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
                   LinearLayout clockPill = new LinearLayout(this);
                   clockPill.setOrientation(LinearLayout.HORIZONTAL);
                   clockPill.setGravity(Gravity.CENTER_VERTICAL);
-                  clockPill.setPadding(24, 8, 24, 8);
-                  GradientDrawable clockPillBg = new GradientDrawable();
-                  clockPillBg.setColor(Color.parseColor("#66000000"));
-                  clockPillBg.setCornerRadius(30f);
-                  clockPill.setBackground(clockPillBg);
+                  clockPill.setPadding(28, 10, 28, 10);
+                  GradientDrawable clockBg = new GradientDrawable();
+                  clockBg.setColor(Color.parseColor("#880F172A"));
+                  clockBg.setCornerRadius(30f);
+                  clockBg.setStroke(2, Color.parseColor("#44FFFFFF"));
+                  clockPill.setBackground(clockBg);
 
                   topTimeView = new TextView(this);
                   topTimeView.setTextColor(Color.WHITE);
-                  topTimeView.setTextSize(18);
+                  topTimeView.setTextSize(20);
                   topTimeView.setTypeface(Typeface.DEFAULT_BOLD);
                   clockPill.addView(topTimeView);
 
                   topDateView = new TextView(this);
-                  topDateView.setTextColor(Color.parseColor("#B0BEC5"));
-                  topDateView.setTextSize(12);
+                  topDateView.setTextColor(Color.parseColor("#F1F5F9"));
+                  topDateView.setTextSize(13);
                   topDateView.setPadding(14, 0, 0, 0);
                   clockPill.addView(topDateView);
 
                   topBar.addView(clockPill);
-                  contentArea.addView(topBar);
+                  root.addView(topBar);
 
-                  // СРЕДНИЙ РЯД: 3 полупрозрачных стеклянных виджета (Часы, Статус ТВ и Память, Быстрые действия)
-                  LinearLayout widgetsRow = new LinearLayout(this);
-                  widgetsRow.setOrientation(LinearLayout.HORIZONTAL);
-                  LinearLayout.LayoutParams wrLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 230);
-                  wrLp.setMargins(0, 24, 0, 22);
-                  widgetsRow.setLayoutParams(wrLp);
+                  // ПУСТОЕ ПРОСТРАНСТВО ПО ЦЕНТРУ — чтобы лица на вашей семейной фотографии были полностью видны!
+                  View photoWindow = new View(this);
+                  root.addView(photoWindow, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-                  // Виджет 1: Часы (как Conakry 12:46 на скриншоте)
-                  LinearLayout wClock = createGlassWidget();
-                  wClock.setOrientation(LinearLayout.VERTICAL);
-                  TextView wClockTitle = new TextView(this);
-                  wClockTitle.setText("Philips 43PUS8057");
-                  wClockTitle.setTextColor(Color.WHITE);
-                  wClockTitle.setTextSize(16);
-                  wClock.addView(wClockTitle);
-
-                  TextView wClockSub = new TextView(this);
-                  wClockSub.setText("Android TV 11 • AdGuard DNS Активен");
-                  wClockSub.setTextColor(Color.parseColor("#80CBC4"));
-                  wClockSub.setTextSize(12);
-                  wClock.addView(wClockSub);
-
-                  LinearLayout timeLine = new LinearLayout(this);
-                  timeLine.setOrientation(LinearLayout.HORIZONTAL);
-                  timeLine.setGravity(Gravity.BOTTOM);
-                  timeLine.setPadding(0, 28, 0, 0);
-
-                  bigClockHour = new TextView(this);
-                  bigClockHour.setTextColor(Color.WHITE);
-                  bigClockHour.setTextSize(42);
-                  bigClockHour.setTypeface(Typeface.create("sans-serif-light", Typeface.BOLD));
-                  timeLine.addView(bigClockHour);
-
-                  TextView colon = new TextView(this);
-                  colon.setText(" : ");
-                  colon.setTextColor(Color.parseColor("#FFD54F"));
-                  colon.setTextSize(36);
-                  timeLine.addView(colon);
-
-                  bigClockMin = new TextView(this);
-                  bigClockMin.setTextColor(Color.parseColor("#FFD54F"));
-                  bigClockMin.setTextSize(42);
-                  bigClockMin.setTypeface(Typeface.create("sans-serif-light", Typeface.BOLD));
-                  timeLine.addView(bigClockMin);
-
-                  wClock.addView(timeLine);
-                  LinearLayout.LayoutParams w1Lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.0f);
-                  w1Lp.setMargins(0, 0, 18, 0);
-                  widgetsRow.addView(wClock, w1Lp);
-
-                  // Виджет 2: Центральный виджет с большим солнечным индикатором и ОЗУ
-                  LinearLayout wCenter = createGlassWidget();
-                  wCenter.setOrientation(LinearLayout.HORIZONTAL);
-                  wCenter.setGravity(Gravity.CENTER_VERTICAL);
-
-                  LinearLayout wCenterLeft = new LinearLayout(this);
-                  wCenterLeft.setOrientation(LinearLayout.VERTICAL);
-                  ramWidgetText = new TextView(this);
-                  ramWidgetText.setTextColor(Color.WHITE);
-                  ramWidgetText.setTextSize(28);
-                  ramWidgetText.setTypeface(Typeface.DEFAULT_BOLD);
-                  wCenterLeft.addView(ramWidgetText);
-
-                  storageWidgetText = new TextView(this);
-                  storageWidgetText.setTextColor(Color.parseColor("#CFD8DC"));
-                  storageWidgetText.setTextSize(13);
-                  storageWidgetText.setPadding(0, 6, 0, 0);
-                  wCenterLeft.addView(storageWidgetText);
-                  wCenter.addView(wCenterLeft, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-                  TextView sunIcon = new TextView(this);
-                  sunIcon.setText("☀");
-                  sunIcon.setTextColor(Color.parseColor("#FFD600"));
-                  sunIcon.setTextSize(64);
-                  sunIcon.setGravity(Gravity.CENTER);
-                  wCenter.addView(sunIcon);
-
-                  LinearLayout.LayoutParams w2Lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.3f);
-                  w2Lp.setMargins(0, 0, 18, 0);
-                  widgetsRow.addView(wCenter, w2Lp);
-
-                  // Виджет 3: Правая сводка горячих клавиш пульта
-                  LinearLayout wRight = createGlassWidget();
-                  wRight.setOrientation(LinearLayout.VERTICAL);
-                  wRight.setGravity(Gravity.CENTER_VERTICAL);
-                  wRight.addView(createInfoLine("🔴 Кнопка Netflix", "Запуск v2rayTun"));
-                  wRight.addView(createInfoLine("🔵 Кнопка Prime/Rakuten", "Запуск Zona"));
-                  wRight.addView(createInfoLine("🟢 Удержание OK", "Очистка кэша"));
-                  wRight.addView(createInfoLine("🛡 Реклама в Zona", "Заблокирована"));
-
-                  LinearLayout.LayoutParams w3Lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.1f);
-                  widgetsRow.addView(wRight, w3Lp);
-
-                  contentArea.addView(widgetsRow);
-
-                  // ЗАГОЛОВОК ALL APPS
+                  // НИЖНИЙ РЯД: Заголовок и карточки приложений (как на скриншоте)
                   TextView allAppsTitle = new TextView(this);
-                  allAppsTitle.setText("All Apps");
+                  allAppsTitle.setText("Приложения  •  Кнопка Netflix = VPN");
                   allAppsTitle.setTextColor(Color.WHITE);
-                  allAppsTitle.setTextSize(18);
+                  allAppsTitle.setTextSize(16);
                   allAppsTitle.setTypeface(Typeface.DEFAULT_BOLD);
-                  allAppsTitle.setPadding(6, 0, 0, 10);
-                  contentArea.addView(allAppsTitle);
+                  allAppsTitle.setShadowLayer(8f, 0f, 2f, Color.BLACK);
+                  allAppsTitle.setPadding(12, 0, 0, 6);
+                  root.addView(allAppsTitle);
 
-                  // НИЖНЯЯ ЛЕНТА КАРТОЧЕК ПРИЛОЖЕНИЙ (ТОЧЬ-В-ТОЧЬ КАК НА СКРИНШОТЕ: БЕЛЫЕ ПРЯМОУГОЛЬНИКИ + ТЕКСТ ВНИЗУ + ЖЕЛТОЕ СВЕЧЕНИЕ)
                   HorizontalScrollView appScroll = new HorizontalScrollView(this);
                   appScroll.setHorizontalScrollBarEnabled(false);
+                  appScroll.setFocusable(false);
                   appScroll.setClipChildren(false);
                   appScroll.setClipToPadding(false);
 
                   appsStrip = new LinearLayout(this);
                   appsStrip.setOrientation(LinearLayout.HORIZONTAL);
-                  appsStrip.setPadding(16, 20, 16, 20);
+                  appsStrip.setPadding(16, 18, 16, 14);
                   appsStrip.setClipChildren(false);
                   appsStrip.setClipToPadding(false);
                   appScroll.addView(appsStrip);
 
-                  contentArea.addView(appScroll);
-                  mainHorizontal.addView(contentArea, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
-                  screen.addView(mainHorizontal);
+                  root.addView(appScroll);
+                  screen.addView(root, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                   setContentView(screen);
               }
 
-              private void updateWidgets() {
+              private void updateClock() {
                   Date now = new Date();
                   topTimeView.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(now));
                   topDateView.setText(new SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(now));
-                  bigClockHour.setText(new SimpleDateFormat("HH", Locale.getDefault()).format(now));
-                  bigClockMin.setText(new SimpleDateFormat("mm", Locale.getDefault()).format(now));
-
-                  try {
-                      ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-                      ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
-                      am.getMemoryInfo(mi);
-                      long freeMb = mi.availMem / (1024 * 1024);
-                      long totalMb = mi.totalMem / (1024 * 1024);
-                      ramWidgetText.setText("ОЗУ: " + freeMb + " МБ");
-
-                      StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
-                      long freeGb = (stat.getAvailableBlocksLong() * stat.getBlockSizeLong()) / (1024 * 1024);
-                      storageWidgetText.setText("Свободно из " + totalMb + " МБ\nПамять ТВ: " + freeGb + " МБ свободно");
-                  } catch (Exception e) {
-                      ramWidgetText.setText("TV Ready");
-                  }
               }
 
               private void loadAppsRow() {
                   appsStrip.removeAllViews();
-                  v2rayPkg = null;
-                  zonaPkg = null;
+                  v2rayApp = null;
+                  zonaApp = null;
 
-                  List<ApplicationInfo> installed = pm.getInstalledApplications(0);
+                  // Создаем папки для обоев при первом запуске
+                  getExternalFilesDir(null);
+
+                  Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
+                  List<ResolveInfo> resolved = pm.queryIntentActivities(mainIntent, 0);
                   List<AppEntry> list = new ArrayList<AppEntry>();
+                  Set<String> seenPackages = new HashSet<String>();
 
-                  for (ApplicationInfo app : installed) {
-                      String pkg = app.packageName;
-                      if (pkg.equals(getPackageName())) continue;
+                  for (ResolveInfo info : resolved) {
+                      if (info.activityInfo == null) continue;
+                      String pkg = info.activityInfo.packageName;
+                      if (pkg.equals(getPackageName()) || seenPackages.contains(pkg)) continue;
 
-                      Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
-                      if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
-                      if (launch == null) continue;
+                      Intent lb = pm.getLeanbackLaunchIntentForPackage(pkg);
+                      Intent std = pm.getLaunchIntentForPackage(pkg);
+                      if (lb == null && std == null) continue;
+
+                      seenPackages.add(pkg);
 
                       AppEntry entry = new AppEntry();
                       entry.pkg = pkg;
-                      entry.label = app.loadLabel(pm).toString();
-                      entry.icon = app.loadIcon(pm);
-                      entry.banner = app.loadBanner(pm);
+                      entry.activityName = info.activityInfo.name;
+                      entry.label = info.loadLabel(pm).toString();
+                      entry.icon = info.loadIcon(pm);
+                      entry.banner = info.activityInfo.loadBanner(pm);
+                      if (entry.banner == null) {
+                          entry.banner = info.activityInfo.applicationInfo.loadBanner(pm);
+                      }
 
                       String lp = pkg.toLowerCase();
                       String ll = entry.label.toLowerCase();
                       if (lp.contains("v2ray") || ll.contains("v2ray")) {
-                          v2rayPkg = pkg;
+                          v2rayApp = entry;
                           entry.isPriority = true;
                       } else if (lp.contains("zona") || ll.equals("zona")) {
-                          zonaPkg = pkg;
+                          zonaApp = entry;
                           entry.isPriority = true;
                       }
                       list.add(entry);
@@ -493,7 +448,6 @@ jobs:
                   if (firstCard != null) firstCard.requestFocus();
               }
 
-              // КАРТОЧКА ПРИЛОЖЕНИЯ ТОЧЬ-В-ТОЧЬ КАК НА СКРИНШОТЕ (Белая плитка с баннером/логотипом + подпись снизу + желтая рамка при выборе)
               private View createScreenshotAppCard(final AppEntry app) {
                   LinearLayout wrapper = new LinearLayout(this);
                   wrapper.setOrientation(LinearLayout.VERTICAL);
@@ -502,29 +456,26 @@ jobs:
                   wrapper.setFocusableInTouchMode(true);
                   wrapper.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
 
-                  LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(250, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(240, LinearLayout.LayoutParams.WRAP_CONTENT);
                   wrapLp.setMargins(12, 0, 12, 0);
                   wrapper.setLayoutParams(wrapLp);
 
-                  // Верхний белый прямоугольник (240x132)
                   final FrameLayout cardBox = new FrameLayout(this);
-                  LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(240, 132);
+                  LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(228, 124);
                   cardBox.setLayoutParams(boxLp);
 
                   final GradientDrawable normalBoxBg = new GradientDrawable();
-                  normalBoxBg.setColor(Color.parseColor("#F5F7FA"));
-                  normalBoxBg.setCornerRadius(10f);
+                  normalBoxBg.setColor(Color.parseColor("#F2FFFFFF"));
+                  normalBoxBg.setCornerRadius(12f);
 
-                  // Желто-золотая светящаяся рамка при наведении (как у TV SETUP Suite на скриншоте)
                   final GradientDrawable focusedBoxBg = new GradientDrawable();
                   focusedBoxBg.setColor(Color.WHITE);
-                  focusedBoxBg.setCornerRadius(10f);
+                  focusedBoxBg.setCornerRadius(12f);
                   focusedBoxBg.setStroke(6, Color.parseColor("#FFD600"));
 
                   cardBox.setBackground(normalBoxBg);
 
                   if (app.banner != null) {
-                      // Если у приложения есть широкоформатный баннер (YouTube, Play Store и т.д.)
                       ImageView bannerImg = new ImageView(this);
                       bannerImg.setImageDrawable(app.banner);
                       bannerImg.setScaleType(ImageView.ScaleType.FIT_XY);
@@ -533,7 +484,6 @@ jobs:
                       bLp.setMargins(6, 6, 6, 6);
                       cardBox.addView(bannerImg, bLp);
                   } else {
-                      // Горизонтальный логотип внутри белой карточки (Иконка + Крупное имя бренда, как у YouTube и Google Play на скрине)
                       LinearLayout inner = new LinearLayout(this);
                       inner.setOrientation(LinearLayout.HORIZONTAL);
                       inner.setGravity(Gravity.CENTER);
@@ -542,11 +492,11 @@ jobs:
                       ImageView iconImg = new ImageView(this);
                       iconImg.setImageDrawable(app.icon);
                       iconImg.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                      inner.addView(iconImg, new LinearLayout.LayoutParams(64, 64));
+                      inner.addView(iconImg, new LinearLayout.LayoutParams(60, 60));
 
                       TextView innerTitle = new TextView(this);
                       innerTitle.setText(app.label);
-                      innerTitle.setTextColor(Color.parseColor("#1E293B"));
+                      innerTitle.setTextColor(Color.parseColor("#0F172A"));
                       innerTitle.setTextSize(15);
                       innerTitle.setTypeface(Typeface.DEFAULT_BOLD);
                       innerTitle.setMaxLines(2);
@@ -558,15 +508,15 @@ jobs:
                               FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                   }
 
-                  // Подпись названия приложения ПОД карточкой
                   final TextView bottomCaption = new TextView(this);
                   bottomCaption.setText(app.label);
-                  bottomCaption.setTextColor(Color.parseColor("#CFD8DC"));
+                  bottomCaption.setTextColor(Color.WHITE);
+                  bottomCaption.setShadowLayer(6f, 0f, 2f, Color.BLACK);
                   bottomCaption.setTextSize(13);
                   bottomCaption.setSingleLine(true);
                   bottomCaption.setEllipsize(TextUtils.TruncateAt.END);
                   bottomCaption.setGravity(Gravity.CENTER);
-                  bottomCaption.setPadding(4, 10, 4, 4);
+                  bottomCaption.setPadding(4, 8, 4, 2);
 
                   wrapper.addView(cardBox);
                   wrapper.addView(bottomCaption);
@@ -575,65 +525,22 @@ jobs:
                       @Override
                       public void onFocusChange(View v, boolean hasFocus) {
                           cardBox.setBackground(hasFocus ? focusedBoxBg : normalBoxBg);
-                          bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.parseColor("#CFD8DC"));
+                          bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.WHITE);
                           bottomCaption.setTypeface(hasFocus ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-                          v.animate().scaleX(hasFocus ? 1.12f : 1.0f).scaleY(hasFocus ? 1.12f : 1.0f).setDuration(140).start();
+                          v.animate().scaleX(hasFocus ? 1.12f : 1.0f).scaleY(hasFocus ? 1.12f : 1.0f).setDuration(130).start();
                       }
                   });
 
-                  wrapper.setOnKeyListener(new View.OnKeyListener() {
+                  wrapper.setTag(new Runnable() {
                       @Override
-                      public boolean onKey(View v, int keyCode, KeyEvent event) {
-                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                              if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0) {
-                                  openAppInfo(app.pkg);
-                                  return true;
-                              }
-                              if (event.getAction() == KeyEvent.ACTION_UP && event.getRepeatCount() == 0) {
-                                  launchApp(app.pkg, app.label);
-                                  return true;
-                              }
-                          }
-                          return false;
-                      }
+                      public void run() { launchEntry(app, app.label); }
                   });
-
-                  wrapper.setOnClickListener(new View.OnClickListener() {
+                  wrapper.setTag(android.R.id.summary, new Runnable() {
                       @Override
-                      public void onClick(View v) { launchApp(app.pkg, app.label); }
+                      public void run() { openAppInfo(app.pkg); }
                   });
 
                   return wrapper;
-              }
-
-              private LinearLayout createGlassWidget() {
-                  LinearLayout box = new LinearLayout(this);
-                  box.setPadding(24, 20, 24, 20);
-                  GradientDrawable glass = new GradientDrawable();
-                  glass.setColor(Color.parseColor("#77101820"));
-                  glass.setCornerRadius(18f);
-                  glass.setStroke(2, Color.parseColor("#33FFFFFF"));
-                  box.setBackground(glass);
-                  return box;
-              }
-
-              private View createInfoLine(String left, String right) {
-                  LinearLayout row = new LinearLayout(this);
-                  row.setOrientation(LinearLayout.HORIZONTAL);
-                  row.setPadding(0, 5, 0, 5);
-                  TextView l = new TextView(this);
-                  l.setText(left);
-                  l.setTextColor(Color.parseColor("#B0BEC5"));
-                  l.setTextSize(12);
-                  row.addView(l, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-                  TextView r = new TextView(this);
-                  r.setText(right);
-                  r.setTextColor(Color.parseColor("#FFD54F"));
-                  r.setTextSize(12);
-                  r.setTypeface(Typeface.DEFAULT_BOLD);
-                  row.addView(r);
-                  return row;
               }
 
               private View createTopPill(String text, final Runnable action) {
@@ -641,15 +548,18 @@ jobs:
                   pill.setText(text);
                   pill.setTextColor(Color.WHITE);
                   pill.setTextSize(13);
+                  pill.setTypeface(Typeface.DEFAULT_BOLD);
                   pill.setPadding(22, 10, 22, 10);
                   pill.setFocusable(true);
+                  pill.setFocusableInTouchMode(true);
 
                   final GradientDrawable normal = new GradientDrawable();
-                  normal.setColor(Color.parseColor("#66000000"));
+                  normal.setColor(Color.parseColor("#880F172A"));
                   normal.setCornerRadius(24f);
+                  normal.setStroke(2, Color.parseColor("#44FFFFFF"));
 
                   final GradientDrawable focused = new GradientDrawable();
-                  focused.setColor(Color.parseColor("#00C853"));
+                  focused.setColor(Color.parseColor("#FFD600"));
                   focused.setCornerRadius(24f);
 
                   pill.setBackground(normal);
@@ -657,18 +567,10 @@ jobs:
                       @Override
                       public void onFocusChange(View v, boolean hasFocus) {
                           v.setBackground(hasFocus ? focused : normal);
+                          pill.setTextColor(hasFocus ? Color.BLACK : Color.WHITE);
                       }
                   });
-                  pill.setOnKeyListener(new View.OnKeyListener() {
-                      @Override
-                      public boolean onKey(View v, int keyCode, KeyEvent event) {
-                          if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && event.getAction() == KeyEvent.ACTION_UP) {
-                              action.run();
-                              return true;
-                          }
-                          return false;
-                      }
-                  });
+                  pill.setTag(action);
 
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                           LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -677,58 +579,24 @@ jobs:
                   return pill;
               }
 
-              private View createSidebarIcon(String symbol, String bgHex, boolean isTop, final Runnable action) {
-                  TextView btn = new TextView(this);
-                  btn.setText(symbol);
-                  btn.setTextColor(Color.WHITE);
-                  btn.setTextSize(isTop ? 18 : 14);
-                  btn.setTypeface(Typeface.DEFAULT_BOLD);
-                  btn.setGravity(Gravity.CENTER);
-                  btn.setFocusable(true);
-
-                  final GradientDrawable normal = new GradientDrawable();
-                  normal.setColor(Color.parseColor(bgHex));
-                  normal.setCornerRadius(32f);
-
-                  final GradientDrawable focused = new GradientDrawable();
-                  focused.setColor(Color.parseColor("#FFD600"));
-                  focused.setCornerRadius(32f);
-
-                  btn.setBackground(normal);
-                  btn.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-                      @Override
-                      public void onFocusChange(View v, boolean hasFocus) {
-                          btn.setBackground(hasFocus ? focused : normal);
-                          btn.setTextColor(hasFocus ? Color.BLACK : Color.WHITE);
-                      }
-                  });
-                  btn.setOnKeyListener(new View.OnKeyListener() {
-                      @Override
-                      public boolean onKey(View v, int keyCode, KeyEvent event) {
-                          if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && event.getAction() == KeyEvent.ACTION_UP) {
-                              action.run();
-                              return true;
-                          }
-                          return false;
-                      }
-                  });
-
-                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(54, 54);
-                  lp.setMargins(0, 0, 0, 22);
-                  btn.setLayoutParams(lp);
-                  return btn;
-              }
-
-              private void launchApp(String pkg, String name) {
-                  if (pkg == null) {
-                      Toast.makeText(this, "Приложение " + name + " не найдено!", Toast.LENGTH_SHORT).show();
+              private void launchEntry(AppEntry app, String fallbackName) {
+                  if (app == null) {
+                      Toast.makeText(this, "Приложение " + fallbackName + " не найдено!", Toast.LENGTH_SHORT).show();
                       return;
                   }
-                  Intent intent = pm.getLeanbackLaunchIntentForPackage(pkg);
-                  if (intent == null) intent = pm.getLaunchIntentForPackage(pkg);
-                  if (intent != null) {
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      startActivity(intent);
+                  try {
+                      Intent intent = pm.getLeanbackLaunchIntentForPackage(app.pkg);
+                      if (intent == null) intent = pm.getLaunchIntentForPackage(app.pkg);
+                      if (intent == null && app.activityName != null) {
+                          intent = new Intent(Intent.ACTION_MAIN);
+                          intent.setComponent(new ComponentName(app.pkg, app.activityName));
+                      }
+                      if (intent != null) {
+                          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                          startActivity(intent);
+                      }
+                  } catch (Exception e) {
+                      Toast.makeText(this, "Ошибка запуска: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                   }
               }
 
@@ -756,5 +624,5 @@ jobs:
       - name: Выгрузка готового APK
         uses: actions/upload-artifact@v4
         with:
-          name: philips-premium-ui-v4
+          name: philips-family-ui-v6
           path: launcher.apk
