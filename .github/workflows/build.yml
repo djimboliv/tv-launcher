@@ -1,4 +1,4 @@
-name: Build Philips Lite Launcher
+name: Build Philips Modern Card Launcher
 
 on:
   push:
@@ -16,14 +16,14 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="2"
-              android:versionName="1.1">
+              android:versionCode="3"
+              android:versionName="2.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="30" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
               <uses-feature android:name="android.software.leanback" android:required="false" />
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
               <application
-                  android:label="Philips Lite Home"
+                  android:label="Philips Modern Home"
                   android:hardwareAccelerated="true"
                   android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
                   <activity
@@ -48,30 +48,50 @@ jobs:
           package com.custom.philipslauncher;
 
           import android.app.Activity;
+          import android.content.ComponentName;
           import android.content.Intent;
+          import android.content.pm.ApplicationInfo;
           import android.content.pm.PackageManager;
-          import android.content.pm.ResolveInfo;
           import android.graphics.Color;
           import android.graphics.Typeface;
+          import android.graphics.drawable.Drawable;
           import android.graphics.drawable.GradientDrawable;
           import android.net.Uri;
           import android.os.Bundle;
           import android.provider.Settings;
+          import android.text.TextUtils;
           import android.view.Gravity;
           import android.view.KeyEvent;
           import android.view.View;
           import android.widget.GridLayout;
+          import android.widget.HorizontalScrollView;
+          import android.widget.ImageView;
           import android.widget.LinearLayout;
           import android.widget.ScrollView;
           import android.widget.TextView;
           import android.widget.Toast;
+          import java.text.SimpleDateFormat;
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Comparator;
+          import java.util.Date;
           import java.util.List;
+          import java.util.Locale;
 
           public class MainActivity extends Activity {
               private PackageManager pm;
               private String v2rayPkg = null;
               private String zonaPkg = null;
+              private LinearLayout favRow;
               private GridLayout appsGrid;
+              private TextView clockView;
+
+              private static class AppEntry {
+                  String label;
+                  String pkg;
+                  Drawable icon;
+                  Drawable banner;
+              }
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -83,24 +103,23 @@ jobs:
               @Override
               protected void onResume() {
                   super.onResume();
+                  if (clockView != null) {
+                      clockView.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
+                  }
                   loadInstalledApps();
               }
 
               @Override
-              public void onBackPressed() {
-                  // Блокируем закрытие главного экрана по кнопке Назад
-              }
+              public void onBackPressed() {}
 
               @Override
               public boolean onKeyDown(int keyCode, KeyEvent event) {
-                  // Кнопка Netflix на пультах Philips (KEYCODE_BUTTON_1 = 188) -> запуск v2rayTun
                   if (keyCode == KeyEvent.KEYCODE_BUTTON_1 || keyCode == 188) {
-                      launchSpecialApp(v2rayPkg, "v2rayTun");
+                      launchPackage(v2rayPkg, "v2rayTun");
                       return true;
                   }
-                  // Соседняя рекламная кнопка Prime Video / Rakuten / Кинопоиск (189 или 190) -> запуск Zona
                   if (keyCode == KeyEvent.KEYCODE_BUTTON_2 || keyCode == KeyEvent.KEYCODE_BUTTON_3 || keyCode == 189 || keyCode == 190) {
-                      launchSpecialApp(zonaPkg, "Zona");
+                      launchPackage(zonaPkg, "Zona");
                       return true;
                   }
                   return super.onKeyDown(keyCode, event);
@@ -108,187 +127,286 @@ jobs:
 
               private void buildUi() {
                   ScrollView scroll = new ScrollView(this);
-                  scroll.setBackgroundColor(Color.parseColor("#0D1117"));
+                  GradientDrawable bg = new GradientDrawable(
+                          GradientDrawable.Orientation.TOP_BOTTOM,
+                          new int[]{Color.parseColor("#141E30"), Color.parseColor("#0B0F19")});
+                  scroll.setBackground(bg);
                   scroll.setFillViewport(true);
 
                   LinearLayout root = new LinearLayout(this);
                   root.setOrientation(LinearLayout.VERTICAL);
-                  root.setPadding(64, 48, 64, 48);
+                  root.setPadding(70, 50, 70, 50);
+
+                  // Верхняя шапка с часами
+                  LinearLayout header = new LinearLayout(this);
+                  header.setOrientation(LinearLayout.HORIZONTAL);
+                  header.setGravity(Gravity.CENTER_VERTICAL);
 
                   TextView title = new TextView(this);
-                  title.setText("PHILIPS TV • БЫСТРЫЙ ДОСТУП (Кнопка Netflix = VPN)");
-                  title.setTextColor(Color.parseColor("#8B949E"));
-                  title.setTextSize(16);
-                  title.setTypeface(Typeface.DEFAULT_BOLD);
-                  root.addView(title);
+                  title.setText("Smart TV");
+                  title.setTextColor(Color.WHITE);
+                  title.setTextSize(26);
+                  title.setTypeface(Typeface.create("sans-serif-light", Typeface.BOLD));
+                  LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  header.addView(title, titleLp);
 
-                  LinearLayout heroRow = new LinearLayout(this);
-                  heroRow.setOrientation(LinearLayout.HORIZONTAL);
-                  LinearLayout.LayoutParams heroParams = new LinearLayout.LayoutParams(
-                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                  heroParams.setMargins(0, 24, 0, 48);
-                  heroRow.setLayoutParams(heroParams);
+                  clockView = new TextView(this);
+                  clockView.setTextColor(Color.parseColor("#A0AEC0"));
+                  clockView.setTextSize(22);
+                  clockView.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+                  header.addView(clockView);
+                  root.addView(header);
 
-                  TextView vpnBtn = createButton("VPN: v2rayTun", "#1F6FEB", "#00E676", true);
-                  vpnBtn.setOnClickListener(new View.OnClickListener() {
-                      @Override
-                      public void onClick(View v) { launchSpecialApp(v2rayPkg, "v2rayTun"); }
-                  });
-                  vpnBtn.setOnLongClickListener(new View.OnLongClickListener() {
-                      @Override
-                      public boolean onLongClick(View v) { return openAppInfo(v2rayPkg); }
-                  });
+                  // Секция 1: Избранное (крупная лента карточек как на скриншоте)
+                  TextView favTitle = new TextView(this);
+                  favTitle.setText("Быстрый запуск");
+                  favTitle.setTextColor(Color.parseColor("#CBD5E0"));
+                  favTitle.setTextSize(16);
+                  favTitle.setPadding(8, 36, 0, 16);
+                  root.addView(favTitle);
 
-                  TextView zonaBtn = createButton("ZONA (Кино)", "#238636", "#00E676", true);
-                  zonaBtn.setOnClickListener(new View.OnClickListener() {
-                      @Override
-                      public void onClick(View v) { launchSpecialApp(zonaPkg, "Zona"); }
-                  });
-                  zonaBtn.setOnLongClickListener(new View.OnLongClickListener() {
-                      @Override
-                      public boolean onLongClick(View v) { return openAppInfo(zonaPkg); }
-                  });
+                  HorizontalScrollView hScroll = new HorizontalScrollView(this);
+                  hScroll.setHorizontalScrollBarEnabled(false);
+                  hScroll.setClipChildren(false);
+                  hScroll.setClipToPadding(false);
 
-                  TextView settingsBtn = createButton("Настройки ТВ", "#21262D", "#58A6FF", true);
-                  settingsBtn.setOnClickListener(new View.OnClickListener() {
-                      @Override
-                      public void onClick(View v) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
-                  });
+                  favRow = new LinearLayout(this);
+                  favRow.setOrientation(LinearLayout.HORIZONTAL);
+                  favRow.setPadding(12, 16, 12, 16);
+                  favRow.setClipChildren(false);
+                  favRow.setClipToPadding(false);
+                  hScroll.addView(favRow);
+                  root.addView(hScroll);
 
-                  heroRow.addView(vpnBtn);
-                  heroRow.addView(zonaBtn);
-                  heroRow.addView(settingsBtn);
-                  root.addView(heroRow);
-
+                  // Секция 2: Сетка всех приложений с иконками
                   TextView gridTitle = new TextView(this);
-                  gridTitle.setText("ВСЕ ПРИЛОЖЕНИЯ (Удерживайте OK для очистки кэша или остановки)");
-                  gridTitle.setTextColor(Color.parseColor("#8B949E"));
-                  gridTitle.setTextSize(13);
+                  gridTitle.setText("Все приложения (удерживайте OK для настроек приложения)");
+                  gridTitle.setTextColor(Color.parseColor("#CBD5E0"));
+                  gridTitle.setTextSize(16);
+                  gridTitle.setPadding(8, 32, 0, 16);
                   root.addView(gridTitle);
 
                   appsGrid = new GridLayout(this);
                   appsGrid.setColumnCount(4);
+                  appsGrid.setClipChildren(false);
+                  appsGrid.setClipToPadding(false);
                   LinearLayout.LayoutParams gridParams = new LinearLayout.LayoutParams(
                           LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                  gridParams.setMargins(0, 20, 0, 0);
                   appsGrid.setLayoutParams(gridParams);
                   root.addView(appsGrid);
 
                   scroll.addView(root);
                   setContentView(scroll);
-                  vpnBtn.requestFocus();
               }
 
               private void loadInstalledApps() {
+                  favRow.removeAllViews();
                   appsGrid.removeAllViews();
                   v2rayPkg = null;
                   zonaPkg = null;
 
-                  Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
-                  List<ResolveInfo> list = pm.queryIntentActivities(mainIntent, 0);
+                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                  List<AppEntry> regularApps = new ArrayList<AppEntry>();
+                  AppEntry v2rayEntry = null;
+                  AppEntry zonaEntry = null;
 
-                  for (ResolveInfo info : list) {
-                      final String pkg = info.activityInfo.packageName;
+                  for (ApplicationInfo app : apps) {
+                      String pkg = app.packageName;
                       if (pkg.equals(getPackageName())) continue;
 
-                      String label = info.loadLabel(pm).toString();
-                      String lowerPkg = pkg.toLowerCase();
-                      String lowerLabel = label.toLowerCase();
+                      Intent launch = pm.getLeanbackLaunchIntentForPackage(pkg);
+                      if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
+                      if (launch == null) continue;
 
-                      if (lowerPkg.contains("v2ray") || lowerLabel.contains("v2ray")) {
+                      AppEntry entry = new AppEntry();
+                      entry.pkg = pkg;
+                      entry.label = app.loadLabel(pm).toString();
+                      entry.icon = app.loadIcon(pm);
+                      entry.banner = app.loadBanner(pm);
+
+                      String lowPkg = pkg.toLowerCase();
+                      String lowLab = entry.label.toLowerCase();
+
+                      if (lowPkg.contains("v2ray") || lowLab.contains("v2ray")) {
                           v2rayPkg = pkg;
-                          continue;
-                      }
-                      if (lowerPkg.contains("zona") || lowerLabel.equals("zona")) {
+                          v2rayEntry = entry;
+                      } else if (lowPkg.contains("zona") || lowLab.equals("zona")) {
                           zonaPkg = pkg;
-                          continue;
+                          zonaEntry = entry;
+                      } else {
+                          regularApps.add(entry);
                       }
-                      if (pm.getLaunchIntentForPackage(pkg) == null && pm.getLeanbackLaunchIntentForPackage(pkg) == null) {
-                          continue;
-                      }
-
-                      TextView item = createButton(label, "#161B22", "#58A6FF", false);
-                      item.setOnClickListener(new View.OnClickListener() {
-                          @Override
-                          public void onClick(View v) { launchPackage(pkg); }
-                      });
-                      item.setOnLongClickListener(new View.OnLongClickListener() {
-                          @Override
-                          public boolean onLongClick(View v) { return openAppInfo(pkg); }
-                      });
-                      appsGrid.addView(item);
                   }
-              }
 
-              private TextView createButton(String text, String baseHex, String focusHex, boolean isHero) {
-                  TextView tv = new TextView(this);
-                  tv.setText(text);
-                  tv.setTextColor(Color.WHITE);
-                  tv.setTextSize(isHero ? 20 : 15);
-                  tv.setTypeface(isHero ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-                  tv.setGravity(Gravity.CENTER);
-                  tv.setSingleLine(true);
-                  tv.setFocusable(true);
-                  tv.setFocusableInTouchMode(true);
-                  tv.setPadding(24, isHero ? 42 : 28, 24, isHero ? 42 : 28);
-
-                  final GradientDrawable normalBg = new GradientDrawable();
-                  normalBg.setColor(Color.parseColor(baseHex));
-                  normalBg.setCornerRadius(16f);
-                  normalBg.setStroke(3, Color.parseColor("#30363D"));
-
-                  final GradientDrawable focusedBg = new GradientDrawable();
-                  focusedBg.setColor(Color.parseColor(baseHex));
-                  focusedBg.setCornerRadius(16f);
-                  focusedBg.setStroke(6, Color.parseColor(focusHex));
-
-                  tv.setBackground(normalBg);
-                  tv.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                  Collections.sort(regularApps, new Comparator<AppEntry>() {
                       @Override
-                      public void onFocusChange(View v, boolean hasFocus) {
-                          v.setBackground(hasFocus ? focusedBg : normalBg);
-                          v.setScaleX(hasFocus ? 1.05f : 1.0f);
-                          v.setScaleY(hasFocus ? 1.05f : 1.0f);
+                      public int compare(AppEntry a, AppEntry b) {
+                          return a.label.compareToIgnoreCase(b.label);
                       }
                   });
 
+                  // 1. Карточка v2rayTun
+                  View vpnCard = createAppCard(
+                          v2rayEntry != null ? v2rayEntry.label : "v2rayTun VPN",
+                          v2rayEntry != null ? v2rayEntry.icon : getResources().getDrawable(android.R.drawable.ic_lock_lock),
+                          v2rayEntry != null ? v2rayEntry.banner : null,
+                          "#2B6CB0", true,
+                          new Runnable() { @Override public void run() { launchPackage(v2rayPkg, "v2rayTun"); } },
+                          new Runnable() { @Override public void run() { openAppInfo(v2rayPkg); } }
+                  );
+                  favRow.addView(vpnCard);
+
+                  // 2. Карточка Zona
+                  View zonaCard = createAppCard(
+                          zonaEntry != null ? zonaEntry.label : "Zona Кинотеатр",
+                          zonaEntry != null ? zonaEntry.icon : getResources().getDrawable(android.R.drawable.ic_media_play),
+                          zonaEntry != null ? zonaEntry.banner : null,
+                          "#2F855A", true,
+                          new Runnable() { @Override public void run() { launchPackage(zonaPkg, "Zona"); } },
+                          new Runnable() { @Override public void run() { openAppInfo(zonaPkg); } }
+                  );
+                  favRow.addView(zonaCard);
+
+                  // 3. Карточка Настройки ТВ
+                  View settingsCard = createAppCard(
+                          "Настройки ТВ",
+                          getResources().getDrawable(android.R.drawable.ic_menu_preferences),
+                          null,
+                          "#37474F", true,
+                          new Runnable() { @Override public void run() { startActivity(new Intent(Settings.ACTION_SETTINGS)); } },
+                          null
+                  );
+                  favRow.addView(settingsCard);
+
+                  // 4. Остальные приложения в красивых плитках с иконками
+                  String[] palette = {"#37474F", "#2C3E50", "#283593", "#00695C", "#4527A0", "#4E342E"};
+                  int colorIdx = 0;
+                  for (final AppEntry app : regularApps) {
+                      String cardColor = palette[colorIdx % palette.length];
+                      colorIdx++;
+                      View card = createAppCard(
+                              app.label, app.icon, app.banner, cardColor, false,
+                              new Runnable() { @Override public void run() { launchPackage(app.pkg, app.label); } },
+                              new Runnable() { @Override public void run() { openAppInfo(app.pkg); } }
+                      );
+                      appsGrid.addView(card);
+                  }
+
+                  vpnCard.requestFocus();
+              }
+
+              private View createAppCard(String title, Drawable icon, Drawable banner, String hexColor, boolean isHero, final Runnable onClick, final Runnable onLongClick) {
+                  LinearLayout card = new LinearLayout(this);
+                  card.setOrientation(LinearLayout.HORIZONTAL);
+                  card.setGravity(Gravity.CENTER_VERTICAL);
+                  card.setFocusable(true);
+                  card.setFocusableInTouchMode(true);
+                  card.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
+
+                  final GradientDrawable normalBg = new GradientDrawable();
+                  normalBg.setColor(Color.parseColor(hexColor));
+                  normalBg.setCornerRadius(14f);
+                  normalBg.setStroke(2, Color.parseColor("#4A5568"));
+
+                  final GradientDrawable focusedBg = new GradientDrawable();
+                  focusedBg.setColor(Color.parseColor(hexColor));
+                  focusedBg.setCornerRadius(14f);
+                  focusedBg.setStroke(5, Color.WHITE);
+
+                  card.setBackground(normalBg);
+
+                  // Если есть фирменный ТВ-баннер и это обычная карточка, или рисуем Иконка слева + Текст справа (как на скриншоте)
+                  ImageView img = new ImageView(this);
+                  img.setImageDrawable(icon != null ? icon : banner);
+                  img.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                  int iconSize = isHero ? 84 : 68;
+                  LinearLayout.LayoutParams imgLp = new LinearLayout.LayoutParams(iconSize, iconSize);
+                  imgLp.setMargins(22, 0, 18, 0);
+                  card.addView(img, imgLp);
+
+                  TextView tv = new TextView(this);
+                  tv.setText(title);
+                  tv.setTextColor(Color.WHITE);
+                  tv.setTextSize(isHero ? 18 : 15);
+                  tv.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+                  tv.setMaxLines(2);
+                  tv.setEllipsize(TextUtils.TruncateAt.END);
+                  LinearLayout.LayoutParams tvLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  tvLp.setMargins(0, 0, 18, 0);
+                  card.addView(tv, tvLp);
+
                   if (isHero) {
-                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-                      lp.setMargins(12, 0, 12, 0);
-                      tv.setLayoutParams(lp);
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(340, 130);
+                      lp.setMargins(0, 0, 24, 0);
+                      card.setLayoutParams(lp);
                   } else {
                       GridLayout.LayoutParams glp = new GridLayout.LayoutParams();
                       glp.width = 0;
+                      glp.height = 115;
                       glp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
                       glp.setMargins(10, 10, 10, 10);
-                      tv.setLayoutParams(glp);
+                      card.setLayoutParams(glp);
                   }
-                  return tv;
+
+                  card.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                      @Override
+                      public void onFocusChange(View v, boolean hasFocus) {
+                          v.setBackground(hasFocus ? focusedBg : normalBg);
+                          v.animate().scaleX(hasFocus ? 1.08f : 1.0f).scaleY(hasFocus ? 1.08f : 1.0f).setDuration(130).start();
+                          v.setElevation(hasFocus ? 16f : 2f);
+                      }
+                  });
+
+                  // Прямой перехват кнопки OK пульта Philips
+                  card.setOnKeyListener(new View.OnKeyListener() {
+                      @Override
+                      public boolean onKey(View v, int keyCode, KeyEvent event) {
+                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                              if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0) {
+                                  if (onLongClick != null) onLongClick.run();
+                                  return true;
+                              }
+                              if (event.getAction() == KeyEvent.ACTION_UP && event.getRepeatCount() == 0) {
+                                  if (onClick != null) onClick.run();
+                                  return true;
+                              }
+                          }
+                          return false;
+                      }
+                  });
+
+                  card.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          if (onClick != null) onClick.run();
+                      }
+                  });
+
+                  return card;
               }
 
-              private void launchSpecialApp(String pkg, String name) {
-                  if (pkg != null) {
-                      launchPackage(pkg);
-                  } else {
-                      Toast.makeText(this, "Приложение " + name + " еще не установлено!", Toast.LENGTH_LONG).show();
+              private void launchPackage(String pkg, String name) {
+                  if (pkg == null) {
+                      Toast.makeText(this, "Приложение " + name + " не найдено!", Toast.LENGTH_SHORT).show();
+                      return;
+                  }
+                  try {
+                      Intent intent = pm.getLeanbackLaunchIntentForPackage(pkg);
+                      if (intent == null) intent = pm.getLaunchIntentForPackage(pkg);
+                      if (intent != null) {
+                          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                          startActivity(intent);
+                      }
+                  } catch (Exception e) {
+                      Toast.makeText(this, "Ошибка запуска: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                   }
               }
 
-              private void launchPackage(String pkg) {
-                  Intent intent = pm.getLeanbackLaunchIntentForPackage(pkg);
-                  if (intent == null) intent = pm.getLaunchIntentForPackage(pkg);
-                  if (intent != null) {
-                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      startActivity(intent);
-                  }
-              }
-
-              private boolean openAppInfo(String pkg) {
-                  if (pkg == null) return false;
+              private void openAppInfo(String pkg) {
+                  if (pkg == null) return;
                   Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                   intent.setData(Uri.parse("package:" + pkg));
                   startActivity(intent);
-                  return true;
               }
           }
           EOF
