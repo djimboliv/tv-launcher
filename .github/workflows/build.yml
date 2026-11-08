@@ -1,4 +1,4 @@
-name: Build Philips Glass UI v8
+name: Build Philips Glass UI v9
 
 on:
   push:
@@ -8,7 +8,7 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Сборка APK v8 с кнопкой Плюс, меню Все приложения и обучением пульта
+      - name: Сборка APK v9 с защитой от множественного удаления
         run: |
           mkdir -p src/com/custom/philipslauncher res/xml build/classes
 
@@ -26,8 +26,8 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="8"
-              android:versionName="8.0">
+              android:versionCode="9"
+              android:versionName="9.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="29" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -82,10 +82,20 @@ jobs:
           import java.util.List;
 
           public class KeyInterceptService extends AccessibilityService {
-              public static volatile int learnMode = 0; // 1 = учим кнопку для v2rayTun, 2 = учим кнопку для Zona
+              public static volatile int learnMode = 0;
 
               @Override
-              public void onAccessibilityEvent(AccessibilityEvent event) {}
+              public void onAccessibilityEvent(AccessibilityEvent event) {
+                  // Если старый лаунчер всё же попытался всплыть — мгновенно перекрываем его нашим
+                  if (event != null && event.getPackageName() != null) {
+                      String pkg = event.getPackageName().toString();
+                      if (pkg.equals("com.google.android.tvlauncher") || pkg.equals("org.droidtv.tvlauncher")) {
+                          Intent home = new Intent(this, MainActivity.class);
+                          home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                          startActivity(home);
+                      }
+                  }
+              }
 
               @Override
               public void onInterrupt() {}
@@ -95,7 +105,6 @@ jobs:
                   int code = event.getKeyCode();
                   int scan = event.getScanCode();
 
-                  // Режим обучения любой кнопки пульта
                   if (learnMode > 0 && event.getAction() == KeyEvent.ACTION_DOWN) {
                       if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN ||
                           code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT ||
@@ -115,7 +124,6 @@ jobs:
                       return true;
                   }
 
-                  // Перехват кнопки Домой -> всегда открываем наш лаунчер поверх всего
                   if (code == KeyEvent.KEYCODE_HOME) {
                       if (event.getAction() == KeyEvent.ACTION_DOWN) {
                           Intent home = new Intent(this, MainActivity.class);
@@ -202,7 +210,9 @@ jobs:
           import android.graphics.Typeface;
           import android.graphics.drawable.Drawable;
           import android.graphics.drawable.GradientDrawable;
+          import android.net.Uri;
           import android.os.Bundle;
+          import android.os.SystemClock;
           import android.provider.Settings;
           import android.text.TextUtils;
           import android.view.Gravity;
@@ -240,6 +250,7 @@ jobs:
               private GridLayout allAppsGrid;
               private TextView topTimeView, topDateView;
               private ImageView bgWallpaper;
+              private long lastLongPressTime = 0;
 
               private static class AppEntry {
                   String label;
@@ -271,7 +282,6 @@ jobs:
 
               @Override
               public void onBackPressed() {
-                  // Если открыто меню "Все приложения" — закрываем его по кнопке Назад
                   if (allAppsOverlay != null && allAppsOverlay.getVisibility() == View.VISIBLE) {
                       allAppsOverlay.setVisibility(View.GONE);
                       if (appsStrip.getChildCount() > 0) {
@@ -285,7 +295,6 @@ jobs:
                   int code = event.getKeyCode();
                   int scan = event.getScanCode();
 
-                  // Если включено обучение кнопки, а служба еще не перехватила — записываем прямо здесь
                   if (KeyInterceptService.learnMode > 0 && event.getAction() == KeyEvent.ACTION_DOWN) {
                       if (code != KeyEvent.KEYCODE_DPAD_UP && code != KeyEvent.KEYCODE_DPAD_DOWN &&
                           code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT &&
@@ -373,7 +382,6 @@ jobs:
                   root.setClipChildren(false);
                   root.setClipToPadding(false);
 
-                  // ВЕРХНЯЯ ПАНЕЛЬ
                   LinearLayout topBar = new LinearLayout(this);
                   topBar.setOrientation(LinearLayout.HORIZONTAL);
                   topBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -419,20 +427,18 @@ jobs:
                   topBar.addView(clockPill);
                   root.addView(topBar);
 
-                  // Прозрачный центр для семейного фото
                   View photoWindow = new View(this);
                   photoWindow.setFocusable(false);
                   root.addView(photoWindow, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
                   TextView hintView = new TextView(this);
-                  hintView.setText("Избранное  •  Удерживайте OK на карточке, чтобы убрать её из ряда");
+                  hintView.setText("Избранное  •  Удерживайте OK на карточке для меню удаления");
                   hintView.setTextColor(Color.parseColor("#CCFFFFFF"));
                   hintView.setShadowLayer(4f, 0f, 2f, Color.BLACK);
                   hintView.setTextSize(12);
                   hintView.setPadding(14, 0, 0, 4);
                   root.addView(hintView);
 
-                  // Нижняя лента: выбранные приложения + кнопка "+" + кнопка "Все приложения"
                   HorizontalScrollView appScroll = new HorizontalScrollView(this);
                   appScroll.setHorizontalScrollBarEnabled(false);
                   appScroll.setFocusable(false);
@@ -450,7 +456,6 @@ jobs:
                   screen.addView(root, new FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-                  // ВСПЛЫВАЮЩЕЕ ОКНО "ВСЕ ПРИЛОЖЕНИЯ" (Полноэкранная полупрозрачная сетка)
                   allAppsOverlay = new FrameLayout(this);
                   allAppsOverlay.setBackgroundColor(Color.parseColor("#DD0B0F19"));
                   allAppsOverlay.setVisibility(View.GONE);
@@ -541,7 +546,6 @@ jobs:
                   String raw = prefs.getString("fav_pkgs_v8", null);
                   List<String> favs = new ArrayList<String>();
                   if (raw == null) {
-                      // При первом запуске добавляем в ряд только v2rayTun и Zona!
                       if (v2rayApp != null) favs.add(v2rayApp.pkg);
                       if (zonaApp != null) favs.add(zonaApp.pkg);
                       saveFavorites(favs);
@@ -554,6 +558,39 @@ jobs:
               private void saveFavorites(List<String> favs) {
                   Set<String> unique = new LinkedHashSet<String>(favs);
                   prefs.edit().putString("fav_pkgs_v8", TextUtils.join(",", unique)).apply();
+              }
+
+              // БЕЗОПАСНОЕ МЕНЮ УДАЛЕНИЯ ОДНОГО ПРИЛОЖЕНИЯ (Защита от цепного удаления!)
+              private void confirmRemoveSingleApp(final AppEntry app) {
+                  long now = SystemClock.uptimeMillis();
+                  if (now - lastLongPressTime < 1200) return; // Блокировка повторного вызова
+                  lastLongPressTime = now;
+
+                  String[] actions = new String[] {
+                      "❌ Убрать «" + app.label + "» с главного экрана",
+                      "⚙ Открыть системные настройки приложения (Очистить кэш)",
+                      "Отмена"
+                  };
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle(app.label);
+                  builder.setItems(actions, new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          if (which == 0) {
+                              List<String> favPkgs = getSavedFavorites();
+                              favPkgs.remove(app.pkg);
+                              saveFavorites(favPkgs);
+                              renderFavoritesStrip();
+                              Toast.makeText(MainActivity.this, app.label + " убрано из избранного", Toast.LENGTH_SHORT).show();
+                          } else if (which == 1) {
+                              Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                              intent.setData(Uri.parse("package:" + app.pkg));
+                              startActivity(intent);
+                          }
+                      }
+                  });
+                  builder.show();
               }
 
               private void renderFavoritesStrip() {
@@ -579,10 +616,7 @@ jobs:
                           },
                           new View.OnLongClickListener() {
                               @Override public boolean onLongClick(View v) {
-                                  favPkgs.remove(app.pkg);
-                                  saveFavorites(favPkgs);
-                                  Toast.makeText(MainActivity.this, app.label + " убрано с главного экрана", Toast.LENGTH_SHORT).show();
-                                  renderFavoritesStrip();
+                                  confirmRemoveSingleApp(app);
                                   return true;
                               }
                           }
@@ -591,7 +625,6 @@ jobs:
                       if (firstFocus == null) firstFocus = card;
                   }
 
-                  // КАРТОЧКА "+" (ДОБАВИТЬ ПРИЛОЖЕНИЕ НА ГЛАВНЫЙ ЭКРАН)
                   View addPlusCard = createActionCard("＋", "Добавить", "#4410B981", new View.OnClickListener() {
                       @Override
                       public void onClick(View v) {
@@ -601,7 +634,6 @@ jobs:
                   appsStrip.addView(addPlusCard);
                   if (firstFocus == null) firstFocus = addPlusCard;
 
-                  // КАРТОЧКА "ВСЕ ПРИЛОЖЕНИЯ"
                   View allAppsCard = createActionCard("❖", "Все приложения", "#443B82F6", new View.OnClickListener() {
                       @Override
                       public void onClick(View v) {
@@ -615,7 +647,6 @@ jobs:
                   }
               }
 
-              // Диалог добавления/удаления приложений по нажатию на карточку "+"
               private void showAddAppDialog() {
                   final List<String> favPkgs = getSavedFavorites();
                   final String[] names = new String[allApps.size()];
@@ -649,7 +680,6 @@ jobs:
                   builder.show();
               }
 
-              // Полноэкранное меню "Все приложения"
               private void showAllAppsDrawer() {
                   allAppsGrid.removeAllViews();
                   View first = null;
@@ -671,7 +701,6 @@ jobs:
                   if (first != null) first.requestFocus();
               }
 
-              // Диалог мгновенного обучения кнопки Netflix или любой другой кнопки пульта
               private void showLearnKeyDialog() {
                   String[] options = new String[] {
                       "1. Назначить кнопку пульта для запуска v2rayTun",
@@ -713,7 +742,6 @@ jobs:
                   LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(214, 114);
                   cardBox.setLayoutParams(boxLp);
 
-                  // Еще более прозрачное матовое стекло (#3D = ~24% непрозрачности)
                   final GradientDrawable normalBoxBg = new GradientDrawable();
                   normalBoxBg.setColor(Color.parseColor("#3D0F172A"));
                   normalBoxBg.setCornerRadius(16f);
@@ -777,14 +805,26 @@ jobs:
                   if (onLongClick != null) wrapper.setOnLongClickListener(onLongClick);
 
                   wrapper.setOnKeyListener(new View.OnKeyListener() {
+                      private boolean longTriggered = false;
+
                       @Override
                       public boolean onKey(View v, int keyCode, KeyEvent event) {
                           if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
-                              if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0 && onLongClick != null) {
-                                  return onLongClick.onLongClick(v);
+                              if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                                  if (event.getRepeatCount() == 0) {
+                                      longTriggered = false;
+                                  } else if (event.getRepeatCount() == 1 && !longTriggered && onLongClick != null) {
+                                      // Срабатывает СТРОГО ОДИН РАЗ при удержании!
+                                      longTriggered = true;
+                                      return onLongClick.onLongClick(v);
+                                  }
+                                  return true;
                               }
-                              if (event.getAction() == KeyEvent.ACTION_UP && event.getRepeatCount() == 0) {
-                                  onClick.onClick(v);
+                              if (event.getAction() == KeyEvent.ACTION_UP) {
+                                  if (!longTriggered) {
+                                      onClick.onClick(v);
+                                  }
+                                  longTriggered = false;
                                   return true;
                               }
                           }
@@ -795,7 +835,6 @@ jobs:
                   return wrapper;
               }
 
-              // Стеклянная карточка с крупным знаком "+" или "Все приложения"
               private View createActionCard(String bigSymbol, String label, String tintHex, final View.OnClickListener onClick) {
                   LinearLayout wrapper = new LinearLayout(this);
                   wrapper.setOrientation(LinearLayout.VERTICAL);
@@ -952,5 +991,5 @@ jobs:
       - name: Выгрузка готового APK
         uses: actions/upload-artifact@v4
         with:
-          name: philips-glass-ui-v8
+          name: philips-glass-ui-v9
           path: launcher.apk
