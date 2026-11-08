@@ -1,4 +1,4 @@
-name: Build Philips Glass UI v7
+name: Build Philips Glass UI v8
 
 on:
   push:
@@ -8,7 +8,7 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Сборка APK с полупрозрачными блоками и исправленными кнопками
+      - name: Сборка APK v8 с кнопкой Плюс, меню Все приложения и обучением пульта
         run: |
           mkdir -p src/com/custom/philipslauncher res/xml build/classes
 
@@ -19,22 +19,20 @@ jobs:
               android:accessibilityFeedbackType="feedbackGeneric"
               android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews"
               android:canRequestFilterKeyEvents="true"
-              android:notificationTimeout="30" />
+              android:notificationTimeout="20" />
           EOF
 
           cat << 'EOF' > AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="7"
-              android:versionName="7.0">
+              android:versionCode="8"
+              android:versionName="8.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="29" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
               <uses-feature android:name="android.software.leanback" android:required="false" />
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-              <!-- android:debuggable="true" позволяет заливать фото напрямую во внутреннюю память лаунчера через run-as -->
               <application
                   android:label="Philips Glass Home"
                   android:debuggable="true"
@@ -46,7 +44,7 @@ jobs:
                       android:launchMode="singleTask"
                       android:exported="true"
                       android:screenOrientation="landscape">
-                      <intent-filter>
+                      <intent-filter priority="999">
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.HOME" />
                           <category android:name="android.intent.category.DEFAULT" />
@@ -73,14 +71,19 @@ jobs:
           package com.custom.philipslauncher;
 
           import android.accessibilityservice.AccessibilityService;
+          import android.content.ComponentName;
           import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
           import android.content.pm.ResolveInfo;
           import android.view.KeyEvent;
           import android.view.accessibility.AccessibilityEvent;
+          import android.widget.Toast;
           import java.util.List;
 
           public class KeyInterceptService extends AccessibilityService {
+              public static volatile int learnMode = 0; // 1 = учим кнопку для v2rayTun, 2 = учим кнопку для Zona
+
               @Override
               public void onAccessibilityEvent(AccessibilityEvent event) {}
 
@@ -92,21 +95,68 @@ jobs:
                   int code = event.getKeyCode();
                   int scan = event.getScanCode();
 
-                  // Кнопка Netflix на пультах Philips (все коды и скан-коды шасси TPM21.5E)
-                  if (code == KeyEvent.KEYCODE_BUTTON_1 || code == KeyEvent.KEYCODE_BUTTON_8 || code == 188 || code == 191 || code == 195 || scan == 380 || scan == 412 || scan == 217 || scan == 139 || scan == 402) {
+                  // Режим обучения любой кнопки пульта
+                  if (learnMode > 0 && event.getAction() == KeyEvent.ACTION_DOWN) {
+                      if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN ||
+                          code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                          code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER ||
+                          code == KeyEvent.KEYCODE_BACK) {
+                          return super.onKeyEvent(event);
+                      }
+                      SharedPreferences prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
+                      if (learnMode == 1) {
+                          prefs.edit().putInt("vpn_keycode", code).putInt("vpn_scancode", scan).apply();
+                          Toast.makeText(this, "Кнопка (код " + code + "/" + scan + ") привязана к v2rayTun!", Toast.LENGTH_LONG).show();
+                      } else if (learnMode == 2) {
+                          prefs.edit().putInt("zona_keycode", code).putInt("zona_scancode", scan).apply();
+                          Toast.makeText(this, "Кнопка (код " + code + "/" + scan + ") привязана к Zona!", Toast.LENGTH_LONG).show();
+                      }
+                      learnMode = 0;
+                      return true;
+                  }
+
+                  // Перехват кнопки Домой -> всегда открываем наш лаунчер поверх всего
+                  if (code == KeyEvent.KEYCODE_HOME) {
                       if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                          Intent home = new Intent(this, MainActivity.class);
+                          home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                          startActivity(home);
+                      }
+                      return true;
+                  }
+
+                  SharedPreferences prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
+                  int savedVpnCode = prefs.getInt("vpn_keycode", -1);
+                  int savedVpnScan = prefs.getInt("vpn_scancode", -1);
+                  int savedZonaCode = prefs.getInt("zona_keycode", -1);
+                  int savedZonaScan = prefs.getInt("zona_scancode", -1);
+
+                  boolean isVpnKey = (savedVpnCode > 0 && code == savedVpnCode) ||
+                                     (savedVpnScan > 0 && scan == savedVpnScan) ||
+                                     code == KeyEvent.KEYCODE_BUTTON_1 || code == KeyEvent.KEYCODE_BUTTON_8 ||
+                                     code == 188 || code == 191 || code == 195 ||
+                                     scan == 380 || scan == 412 || scan == 217 || scan == 139 || scan == 402;
+
+                  boolean isZonaKey = (savedZonaCode > 0 && code == savedZonaCode) ||
+                                      (savedZonaScan > 0 && scan == savedZonaScan) ||
+                                      code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 ||
+                                      code == KeyEvent.KEYCODE_BUTTON_4 || code == 189 || code == 190 ||
+                                      scan == 381 || scan == 413;
+
+                  if (isVpnKey) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                           launchByKeyword("v2ray");
                       }
                       return true;
                   }
 
-                  // Соседние рекламные кнопки (Prime Video / Rakuten / IVI) -> запуск Zona
-                  if (code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 || code == KeyEvent.KEYCODE_BUTTON_4 || code == 189 || code == 190 || scan == 381 || scan == 413) {
-                      if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                  if (isZonaKey) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
                           launchByKeyword("zona");
                       }
                       return true;
                   }
+
                   return super.onKeyEvent(event);
               }
 
@@ -123,7 +173,7 @@ jobs:
                               if (launch == null) launch = pm.getLaunchIntentForPackage(pkg);
                               if (launch == null) {
                                   launch = new Intent(Intent.ACTION_MAIN);
-                                  launch.setClassName(pkg, info.activityInfo.name);
+                                  launch.setComponent(new ComponentName(pkg, info.activityInfo.name));
                               }
                               launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                               startActivity(launch);
@@ -139,8 +189,11 @@ jobs:
           package com.custom.philipslauncher;
 
           import android.app.Activity;
+          import android.app.AlertDialog;
           import android.content.ComponentName;
+          import android.content.DialogInterface;
           import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
           import android.content.pm.ResolveInfo;
           import android.graphics.Bitmap;
@@ -149,7 +202,6 @@ jobs:
           import android.graphics.Typeface;
           import android.graphics.drawable.Drawable;
           import android.graphics.drawable.GradientDrawable;
-          import android.net.Uri;
           import android.os.Bundle;
           import android.provider.Settings;
           import android.text.TextUtils;
@@ -157,27 +209,35 @@ jobs:
           import android.view.KeyEvent;
           import android.view.View;
           import android.widget.FrameLayout;
+          import android.widget.GridLayout;
           import android.widget.HorizontalScrollView;
           import android.widget.ImageView;
           import android.widget.LinearLayout;
+          import android.widget.ScrollView;
           import android.widget.TextView;
           import android.widget.Toast;
           import java.io.File;
           import java.text.SimpleDateFormat;
           import java.util.ArrayList;
+          import java.util.Arrays;
           import java.util.Collections;
           import java.util.Comparator;
           import java.util.Date;
           import java.util.HashSet;
+          import java.util.LinkedHashSet;
           import java.util.List;
           import java.util.Locale;
           import java.util.Set;
 
           public class MainActivity extends Activity {
               private PackageManager pm;
+              private SharedPreferences prefs;
+              private List<AppEntry> allApps = new ArrayList<AppEntry>();
               private AppEntry v2rayApp = null;
               private AppEntry zonaApp = null;
               private LinearLayout appsStrip;
+              private FrameLayout allAppsOverlay;
+              private GridLayout allAppsGrid;
               private TextView topTimeView, topDateView;
               private ImageView bgWallpaper;
 
@@ -187,16 +247,17 @@ jobs:
                   String activityName;
                   Drawable icon;
                   Drawable banner;
-                  boolean isPriority;
               }
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   pm = getPackageManager();
+                  prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
                   buildUi();
                   loadCustomWallpaper();
-                  loadAppsRow();
+                  scanInstalledApps();
+                  renderFavoritesStrip();
               }
 
               @Override
@@ -204,29 +265,68 @@ jobs:
                   super.onResume();
                   updateClock();
                   loadCustomWallpaper();
-                  if (appsStrip.getChildCount() == 0) {
-                      loadAppsRow();
+                  scanInstalledApps();
+                  renderFavoritesStrip();
+              }
+
+              @Override
+              public void onBackPressed() {
+                  // Если открыто меню "Все приложения" — закрываем его по кнопке Назад
+                  if (allAppsOverlay != null && allAppsOverlay.getVisibility() == View.VISIBLE) {
+                      allAppsOverlay.setVisibility(View.GONE);
+                      if (appsStrip.getChildCount() > 0) {
+                          appsStrip.getChildAt(0).requestFocus();
+                      }
                   }
               }
 
               @Override
-              public void onBackPressed() {}
-
-              @Override
-              public boolean onKeyDown(int keyCode, KeyEvent event) {
+              public boolean dispatchKeyEvent(KeyEvent event) {
+                  int code = event.getKeyCode();
                   int scan = event.getScanCode();
-                  if (keyCode == KeyEvent.KEYCODE_BUTTON_1 || keyCode == 188 || keyCode == 191 || scan == 380 || scan == 412 || scan == 217) {
-                      launchEntry(v2rayApp, "v2rayTun");
+
+                  // Если включено обучение кнопки, а служба еще не перехватила — записываем прямо здесь
+                  if (KeyInterceptService.learnMode > 0 && event.getAction() == KeyEvent.ACTION_DOWN) {
+                      if (code != KeyEvent.KEYCODE_DPAD_UP && code != KeyEvent.KEYCODE_DPAD_DOWN &&
+                          code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT &&
+                          code != KeyEvent.KEYCODE_DPAD_CENTER && code != KeyEvent.KEYCODE_ENTER &&
+                          code != KeyEvent.KEYCODE_BACK) {
+                          if (KeyInterceptService.learnMode == 1) {
+                              prefs.edit().putInt("vpn_keycode", code).putInt("vpn_scancode", scan).apply();
+                              Toast.makeText(this, "Готово! Кнопка (код " + code + "/" + scan + ") привязана к v2rayTun!", Toast.LENGTH_LONG).show();
+                          } else {
+                              prefs.edit().putInt("zona_keycode", code).putInt("zona_scancode", scan).apply();
+                              Toast.makeText(this, "Готово! Кнопка (код " + code + "/" + scan + ") привязана к Zona!", Toast.LENGTH_LONG).show();
+                          }
+                          KeyInterceptService.learnMode = 0;
+                          return true;
+                      }
+                  }
+
+                  int savedVpnCode = prefs.getInt("vpn_keycode", -1);
+                  int savedVpnScan = prefs.getInt("vpn_scancode", -1);
+                  int savedZonaCode = prefs.getInt("zona_keycode", -1);
+                  int savedZonaScan = prefs.getInt("zona_scancode", -1);
+
+                  if ((savedVpnCode > 0 && code == savedVpnCode) || (savedVpnScan > 0 && scan == savedVpnScan) ||
+                      code == KeyEvent.KEYCODE_BUTTON_1 || code == 188 || code == 191 || scan == 380 || scan == 412 || scan == 217) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                          launchEntry(v2rayApp, "v2rayTun");
+                      }
                       return true;
                   }
-                  if (keyCode == KeyEvent.KEYCODE_BUTTON_2 || keyCode == KeyEvent.KEYCODE_BUTTON_3 || keyCode == 189 || keyCode == 190 || scan == 381 || scan == 413) {
-                      launchEntry(zonaApp, "Zona");
+
+                  if ((savedZonaCode > 0 && code == savedZonaCode) || (savedZonaScan > 0 && scan == savedZonaScan) ||
+                      code == KeyEvent.KEYCODE_BUTTON_2 || code == KeyEvent.KEYCODE_BUTTON_3 || code == 189 || code == 190 || scan == 381 || scan == 413) {
+                      if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                          launchEntry(zonaApp, "Zona");
+                      }
                       return true;
                   }
-                  return super.onKeyDown(keyCode, event);
+
+                  return super.dispatchKeyEvent(event);
               }
 
-              // Загрузка фото из внутренней папки приложения (не блокируется защитой Android 11)
               private void loadCustomWallpaper() {
                   try {
                       File internalFile = new File(getFilesDir(), "wallpaper.jpg");
@@ -240,9 +340,7 @@ jobs:
                       for (String path : paths) {
                           File f = new File(path);
                           if (f.exists() && f.length() > 100) {
-                              BitmapFactory.Options opts = new BitmapFactory.Options();
-                              opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-                              Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
+                              Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
                               if (bmp != null) {
                                   bgWallpaper.setImageBitmap(bmp);
                                   return;
@@ -256,13 +354,11 @@ jobs:
                   FrameLayout screen = new FrameLayout(this);
                   screen.setBackgroundColor(Color.parseColor("#12161F"));
 
-                  // Полноэкранная фотография
                   bgWallpaper = new ImageView(this);
                   bgWallpaper.setScaleType(ImageView.ScaleType.CENTER_CROP);
                   screen.addView(bgWallpaper, new FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-                  // Легкое затемнение только у самых краев, середина полностью прозрачна
                   View topBottomShade = new View(this);
                   GradientDrawable vignette = new GradientDrawable(
                           GradientDrawable.Orientation.TOP_BOTTOM,
@@ -277,21 +373,21 @@ jobs:
                   root.setClipChildren(false);
                   root.setClipToPadding(false);
 
-                  // Верхняя панель с полупрозрачными кнопками
+                  // ВЕРХНЯЯ ПАНЕЛЬ
                   LinearLayout topBar = new LinearLayout(this);
                   topBar.setOrientation(LinearLayout.HORIZONTAL);
                   topBar.setGravity(Gravity.CENTER_VERTICAL);
 
-                  topBar.addView(createTopPill("🛡  v2rayTun VPN", new View.OnClickListener() {
-                      @Override public void onClick(View v) { launchEntry(v2rayApp, "v2rayTun"); }
+                  topBar.addView(createTopPill("❖  Все приложения", new View.OnClickListener() {
+                      @Override public void onClick(View v) { showAllAppsDrawer(); }
                   }));
-                  topBar.addView(createTopPill("🎬  Zona Кино", new View.OnClickListener() {
-                      @Override public void onClick(View v) { launchEntry(zonaApp, "Zona"); }
+                  topBar.addView(createTopPill("🎯  Привязать кнопку пульта", new View.OnClickListener() {
+                      @Override public void onClick(View v) { showLearnKeyDialog(); }
                   }));
                   topBar.addView(createTopPill("⚙  Настройки ТВ", new View.OnClickListener() {
                       @Override public void onClick(View v) { startActivity(new Intent(Settings.ACTION_SETTINGS)); }
                   }));
-                  topBar.addView(createTopPill("🌐  Сеть", new View.OnClickListener() {
+                  topBar.addView(createTopPill("🌐  Wi-Fi", new View.OnClickListener() {
                       @Override public void onClick(View v) { startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)); }
                   }));
 
@@ -323,12 +419,20 @@ jobs:
                   topBar.addView(clockPill);
                   root.addView(topBar);
 
-                  // Свободный центр экрана для фотографии
+                  // Прозрачный центр для семейного фото
                   View photoWindow = new View(this);
                   photoWindow.setFocusable(false);
                   root.addView(photoWindow, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-                  // Нижний ряд полупрозрачных карточек
+                  TextView hintView = new TextView(this);
+                  hintView.setText("Избранное  •  Удерживайте OK на карточке, чтобы убрать её из ряда");
+                  hintView.setTextColor(Color.parseColor("#CCFFFFFF"));
+                  hintView.setShadowLayer(4f, 0f, 2f, Color.BLACK);
+                  hintView.setTextSize(12);
+                  hintView.setPadding(14, 0, 0, 4);
+                  root.addView(hintView);
+
+                  // Нижняя лента: выбранные приложения + кнопка "+" + кнопка "Все приложения"
                   HorizontalScrollView appScroll = new HorizontalScrollView(this);
                   appScroll.setHorizontalScrollBarEnabled(false);
                   appScroll.setFocusable(false);
@@ -337,7 +441,7 @@ jobs:
 
                   appsStrip = new LinearLayout(this);
                   appsStrip.setOrientation(LinearLayout.HORIZONTAL);
-                  appsStrip.setPadding(14, 16, 14, 12);
+                  appsStrip.setPadding(14, 14, 14, 12);
                   appsStrip.setClipChildren(false);
                   appsStrip.setClipToPadding(false);
                   appScroll.addView(appsStrip);
@@ -345,6 +449,37 @@ jobs:
                   root.addView(appScroll);
                   screen.addView(root, new FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+                  // ВСПЛЫВАЮЩЕЕ ОКНО "ВСЕ ПРИЛОЖЕНИЯ" (Полноэкранная полупрозрачная сетка)
+                  allAppsOverlay = new FrameLayout(this);
+                  allAppsOverlay.setBackgroundColor(Color.parseColor("#DD0B0F19"));
+                  allAppsOverlay.setVisibility(View.GONE);
+
+                  LinearLayout drawerBox = new LinearLayout(this);
+                  drawerBox.setOrientation(LinearLayout.VERTICAL);
+                  drawerBox.setPadding(64, 48, 64, 48);
+
+                  TextView drawerTitle = new TextView(this);
+                  drawerTitle.setText("Все приложения (Нажмите OK для запуска • Нажмите Назад для выхода)");
+                  drawerTitle.setTextColor(Color.WHITE);
+                  drawerTitle.setTextSize(20);
+                  drawerTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                  drawerTitle.setPadding(10, 0, 0, 24);
+                  drawerBox.addView(drawerTitle);
+
+                  ScrollView gridScroll = new ScrollView(this);
+                  gridScroll.setFillViewport(true);
+                  allAppsGrid = new GridLayout(this);
+                  allAppsGrid.setColumnCount(4);
+                  allAppsGrid.setClipChildren(false);
+                  allAppsGrid.setClipToPadding(false);
+                  gridScroll.addView(allAppsGrid);
+                  drawerBox.addView(gridScroll);
+
+                  allAppsOverlay.addView(drawerBox);
+                  screen.addView(allAppsOverlay, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
                   setContentView(screen);
               }
 
@@ -354,14 +489,13 @@ jobs:
                   topDateView.setText(new SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(now));
               }
 
-              private void loadAppsRow() {
-                  appsStrip.removeAllViews();
+              private void scanInstalledApps() {
+                  allApps.clear();
                   v2rayApp = null;
                   zonaApp = null;
 
                   Intent mainIntent = new Intent(Intent.ACTION_MAIN, null);
                   List<ResolveInfo> resolved = pm.queryIntentActivities(mainIntent, 0);
-                  List<AppEntry> list = new ArrayList<AppEntry>();
                   Set<String> seenPackages = new HashSet<String>();
 
                   for (ResolveInfo info : resolved) {
@@ -389,33 +523,173 @@ jobs:
                       String ll = entry.label.toLowerCase();
                       if (lp.contains("v2ray") || ll.contains("v2ray")) {
                           v2rayApp = entry;
-                          entry.isPriority = true;
                       } else if (lp.contains("zona") || ll.equals("zona")) {
                           zonaApp = entry;
-                          entry.isPriority = true;
                       }
-                      list.add(entry);
+                      allApps.add(entry);
                   }
 
-                  Collections.sort(list, new Comparator<AppEntry>() {
+                  Collections.sort(allApps, new Comparator<AppEntry>() {
                       @Override
                       public int compare(AppEntry a, AppEntry b) {
-                          if (a.isPriority != b.isPriority) return a.isPriority ? -1 : 1;
                           return a.label.compareToIgnoreCase(b.label);
                       }
                   });
-
-                  View firstCard = null;
-                  for (final AppEntry app : list) {
-                      View card = createGlassAppCard(app);
-                      appsStrip.addView(card);
-                      if (firstCard == null) firstCard = card;
-                  }
-                  if (firstCard != null) firstCard.requestFocus();
               }
 
-              // ПОЛУПРОЗРАЧНАЯ СТЕКЛЯННАЯ КАРТОЧКА ПРИЛОЖЕНИЯ (Сквозь неё видно фоновое фото!)
-              private View createGlassAppCard(final AppEntry app) {
+              private List<String> getSavedFavorites() {
+                  String raw = prefs.getString("fav_pkgs_v8", null);
+                  List<String> favs = new ArrayList<String>();
+                  if (raw == null) {
+                      // При первом запуске добавляем в ряд только v2rayTun и Zona!
+                      if (v2rayApp != null) favs.add(v2rayApp.pkg);
+                      if (zonaApp != null) favs.add(zonaApp.pkg);
+                      saveFavorites(favs);
+                  } else if (!raw.isEmpty()) {
+                      favs.addAll(Arrays.asList(raw.split(",")));
+                  }
+                  return favs;
+              }
+
+              private void saveFavorites(List<String> favs) {
+                  Set<String> unique = new LinkedHashSet<String>(favs);
+                  prefs.edit().putString("fav_pkgs_v8", TextUtils.join(",", unique)).apply();
+              }
+
+              private void renderFavoritesStrip() {
+                  appsStrip.removeAllViews();
+                  final List<String> favPkgs = getSavedFavorites();
+
+                  View firstFocus = null;
+                  for (final String pkg : favPkgs) {
+                      AppEntry found = null;
+                      for (AppEntry e : allApps) {
+                          if (e.pkg.equals(pkg)) {
+                              found = e;
+                              break;
+                          }
+                      }
+                      if (found == null) continue;
+                      final AppEntry app = found;
+
+                      View card = createGlassAppCard(
+                          app.label, app.icon != null ? app.icon : app.banner, false,
+                          new View.OnClickListener() {
+                              @Override public void onClick(View v) { launchEntry(app, app.label); }
+                          },
+                          new View.OnLongClickListener() {
+                              @Override public boolean onLongClick(View v) {
+                                  favPkgs.remove(app.pkg);
+                                  saveFavorites(favPkgs);
+                                  Toast.makeText(MainActivity.this, app.label + " убрано с главного экрана", Toast.LENGTH_SHORT).show();
+                                  renderFavoritesStrip();
+                                  return true;
+                              }
+                          }
+                      );
+                      appsStrip.addView(card);
+                      if (firstFocus == null) firstFocus = card;
+                  }
+
+                  // КАРТОЧКА "+" (ДОБАВИТЬ ПРИЛОЖЕНИЕ НА ГЛАВНЫЙ ЭКРАН)
+                  View addPlusCard = createActionCard("＋", "Добавить", "#4410B981", new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          showAddAppDialog();
+                      }
+                  });
+                  appsStrip.addView(addPlusCard);
+                  if (firstFocus == null) firstFocus = addPlusCard;
+
+                  // КАРТОЧКА "ВСЕ ПРИЛОЖЕНИЯ"
+                  View allAppsCard = createActionCard("❖", "Все приложения", "#443B82F6", new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          showAllAppsDrawer();
+                      }
+                  });
+                  appsStrip.addView(allAppsCard);
+
+                  if (firstFocus != null && (allAppsOverlay == null || allAppsOverlay.getVisibility() != View.VISIBLE)) {
+                      firstFocus.requestFocus();
+                  }
+              }
+
+              // Диалог добавления/удаления приложений по нажатию на карточку "+"
+              private void showAddAppDialog() {
+                  final List<String> favPkgs = getSavedFavorites();
+                  final String[] names = new String[allApps.size()];
+                  final boolean[] checked = new boolean[allApps.size()];
+
+                  for (int i = 0; i < allApps.size(); i++) {
+                      names[i] = allApps.get(i).label;
+                      checked[i] = favPkgs.contains(allApps.get(i).pkg);
+                  }
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle("Выберите приложения для главного экрана:");
+                  builder.setMultiChoiceItems(names, checked, new DialogInterface.OnMultiChoiceClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which, boolean isChecked) {
+                          String pkg = allApps.get(which).pkg;
+                          if (isChecked) {
+                              if (!favPkgs.contains(pkg)) favPkgs.add(pkg);
+                          } else {
+                              favPkgs.remove(pkg);
+                          }
+                      }
+                  });
+                  builder.setPositiveButton("Сохранить", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          saveFavorites(favPkgs);
+                          renderFavoritesStrip();
+                      }
+                  });
+                  builder.show();
+              }
+
+              // Полноэкранное меню "Все приложения"
+              private void showAllAppsDrawer() {
+                  allAppsGrid.removeAllViews();
+                  View first = null;
+                  for (final AppEntry app : allApps) {
+                      View card = createGlassAppCard(
+                          app.label, app.icon != null ? app.icon : app.banner, true,
+                          new View.OnClickListener() {
+                              @Override public void onClick(View v) {
+                                  allAppsOverlay.setVisibility(View.GONE);
+                                  launchEntry(app, app.label);
+                              }
+                          },
+                          null
+                      );
+                      allAppsGrid.addView(card);
+                      if (first == null) first = card;
+                  }
+                  allAppsOverlay.setVisibility(View.VISIBLE);
+                  if (first != null) first.requestFocus();
+              }
+
+              // Диалог мгновенного обучения кнопки Netflix или любой другой кнопки пульта
+              private void showLearnKeyDialog() {
+                  String[] options = new String[] {
+                      "1. Назначить кнопку пульта для запуска v2rayTun",
+                      "2. Назначить кнопку пульта для запуска Zona"
+                  };
+                  AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  b.setTitle("Привязка кнопки пульта");
+                  b.setItems(options, new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface d, int which) {
+                          KeyInterceptService.learnMode = (which == 0) ? 1 : 2;
+                          Toast.makeText(MainActivity.this, "ТЕПЕРЬ НАЖМИТЕ ЖЕЛАЕМУЮ КНОПКУ НА ПУЛЬТЕ (например, Netflix)!", Toast.LENGTH_LONG).show();
+                      }
+                  });
+                  b.show();
+              }
+
+              private View createGlassAppCard(String title, Drawable icon, boolean isGrid, final View.OnClickListener onClick, final View.OnLongClickListener onLongClick) {
                   LinearLayout wrapper = new LinearLayout(this);
                   wrapper.setOrientation(LinearLayout.VERTICAL);
                   wrapper.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -423,23 +697,31 @@ jobs:
                   wrapper.setClickable(true);
                   wrapper.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
 
-                  LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(232, LinearLayout.LayoutParams.WRAP_CONTENT);
-                  wrapLp.setMargins(10, 0, 10, 0);
-                  wrapper.setLayoutParams(wrapLp);
+                  if (isGrid) {
+                      GridLayout.LayoutParams glp = new GridLayout.LayoutParams();
+                      glp.width = 240;
+                      glp.height = GridLayout.LayoutParams.WRAP_CONTENT;
+                      glp.setMargins(14, 14, 14, 14);
+                      wrapper.setLayoutParams(glp);
+                  } else {
+                      LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(226, LinearLayout.LayoutParams.WRAP_CONTENT);
+                      wrapLp.setMargins(10, 0, 10, 0);
+                      wrapper.setLayoutParams(wrapLp);
+                  }
 
                   final FrameLayout cardBox = new FrameLayout(this);
-                  LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(220, 118);
+                  LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(214, 114);
                   cardBox.setLayoutParams(boxLp);
 
-                  // Полупрозрачный фон (55% прозрачности в покое, 75% при наведении + золотая рамка)
+                  // Еще более прозрачное матовое стекло (#3D = ~24% непрозрачности)
                   final GradientDrawable normalBoxBg = new GradientDrawable();
-                  normalBoxBg.setColor(Color.parseColor("#660F172A"));
-                  normalBoxBg.setCornerRadius(14f);
+                  normalBoxBg.setColor(Color.parseColor("#3D0F172A"));
+                  normalBoxBg.setCornerRadius(16f);
                   normalBoxBg.setStroke(2, Color.parseColor("#55FFFFFF"));
 
                   final GradientDrawable focusedBoxBg = new GradientDrawable();
-                  focusedBoxBg.setColor(Color.parseColor("#991E293B"));
-                  focusedBoxBg.setCornerRadius(14f);
+                  focusedBoxBg.setColor(Color.parseColor("#771E293B"));
+                  focusedBoxBg.setCornerRadius(16f);
                   focusedBoxBg.setStroke(5, Color.parseColor("#FFD600"));
 
                   cardBox.setBackground(normalBoxBg);
@@ -450,15 +732,15 @@ jobs:
                   inner.setPadding(16, 12, 16, 12);
 
                   ImageView iconImg = new ImageView(this);
-                  iconImg.setImageDrawable(app.icon != null ? app.icon : app.banner);
+                  iconImg.setImageDrawable(icon);
                   iconImg.setScaleType(ImageView.ScaleType.FIT_CENTER);
-                  inner.addView(iconImg, new LinearLayout.LayoutParams(58, 58));
+                  inner.addView(iconImg, new LinearLayout.LayoutParams(56, 56));
 
                   TextView innerTitle = new TextView(this);
-                  innerTitle.setText(app.label);
+                  innerTitle.setText(title);
                   innerTitle.setTextColor(Color.WHITE);
                   innerTitle.setShadowLayer(4f, 0f, 2f, Color.BLACK);
-                  innerTitle.setTextSize(15);
+                  innerTitle.setTextSize(14);
                   innerTitle.setTypeface(Typeface.DEFAULT_BOLD);
                   innerTitle.setMaxLines(2);
                   innerTitle.setEllipsize(TextUtils.TruncateAt.END);
@@ -469,10 +751,10 @@ jobs:
                           FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
                   final TextView bottomCaption = new TextView(this);
-                  bottomCaption.setText(app.label);
+                  bottomCaption.setText(title);
                   bottomCaption.setTextColor(Color.WHITE);
                   bottomCaption.setShadowLayer(6f, 0f, 2f, Color.BLACK);
-                  bottomCaption.setTextSize(13);
+                  bottomCaption.setTextSize(12);
                   bottomCaption.setSingleLine(true);
                   bottomCaption.setEllipsize(TextUtils.TruncateAt.END);
                   bottomCaption.setGravity(Gravity.CENTER);
@@ -487,34 +769,97 @@ jobs:
                           cardBox.setBackground(hasFocus ? focusedBoxBg : normalBoxBg);
                           bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.WHITE);
                           bottomCaption.setTypeface(hasFocus ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-                          v.animate().scaleX(hasFocus ? 1.10f : 1.0f).scaleY(hasFocus ? 1.10f : 1.0f).setDuration(120).start();
+                          v.animate().scaleX(hasFocus ? 1.09f : 1.0f).scaleY(hasFocus ? 1.09f : 1.0f).setDuration(120).start();
                       }
                   });
 
-                  // Стандартный системный обработчик клика + дублирующий перехват пульта
-                  wrapper.setOnClickListener(new View.OnClickListener() {
-                      @Override
-                      public void onClick(View v) {
-                          launchEntry(app, app.label);
-                      }
-                  });
-
-                  wrapper.setOnLongClickListener(new View.OnLongClickListener() {
-                      @Override
-                      public boolean onLongClick(View v) {
-                          openAppInfo(app.pkg);
-                          return true;
-                      }
-                  });
+                  wrapper.setOnClickListener(onClick);
+                  if (onLongClick != null) wrapper.setOnLongClickListener(onLongClick);
 
                   wrapper.setOnKeyListener(new View.OnKeyListener() {
                       @Override
                       public boolean onKey(View v, int keyCode, KeyEvent event) {
-                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT || keyCode == KeyEvent.KEYCODE_BUTTON_A) {
-                              if (event.getAction() == KeyEvent.ACTION_UP) {
-                                  launchEntry(app, app.label);
+                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                              if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0 && onLongClick != null) {
+                                  return onLongClick.onLongClick(v);
+                              }
+                              if (event.getAction() == KeyEvent.ACTION_UP && event.getRepeatCount() == 0) {
+                                  onClick.onClick(v);
                                   return true;
                               }
+                          }
+                          return false;
+                      }
+                  });
+
+                  return wrapper;
+              }
+
+              // Стеклянная карточка с крупным знаком "+" или "Все приложения"
+              private View createActionCard(String bigSymbol, String label, String tintHex, final View.OnClickListener onClick) {
+                  LinearLayout wrapper = new LinearLayout(this);
+                  wrapper.setOrientation(LinearLayout.VERTICAL);
+                  wrapper.setGravity(Gravity.CENTER_HORIZONTAL);
+                  wrapper.setFocusable(true);
+                  wrapper.setClickable(true);
+                  wrapper.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
+
+                  LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(170, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  wrapLp.setMargins(10, 0, 10, 0);
+                  wrapper.setLayoutParams(wrapLp);
+
+                  final FrameLayout cardBox = new FrameLayout(this);
+                  LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(158, 114);
+                  cardBox.setLayoutParams(boxLp);
+
+                  final GradientDrawable normalBoxBg = new GradientDrawable();
+                  normalBoxBg.setColor(Color.parseColor(tintHex));
+                  normalBoxBg.setCornerRadius(16f);
+                  normalBoxBg.setStroke(2, Color.parseColor("#66FFFFFF"));
+
+                  final GradientDrawable focusedBoxBg = new GradientDrawable();
+                  focusedBoxBg.setColor(Color.parseColor("#881E293B"));
+                  focusedBoxBg.setCornerRadius(16f);
+                  focusedBoxBg.setStroke(5, Color.parseColor("#FFD600"));
+
+                  cardBox.setBackground(normalBoxBg);
+
+                  TextView sym = new TextView(this);
+                  sym.setText(bigSymbol);
+                  sym.setTextColor(Color.WHITE);
+                  sym.setTextSize(36);
+                  sym.setTypeface(Typeface.DEFAULT_BOLD);
+                  sym.setGravity(Gravity.CENTER);
+                  cardBox.addView(sym, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+                  final TextView bottomCaption = new TextView(this);
+                  bottomCaption.setText(label);
+                  bottomCaption.setTextColor(Color.WHITE);
+                  bottomCaption.setShadowLayer(6f, 0f, 2f, Color.BLACK);
+                  bottomCaption.setTextSize(12);
+                  bottomCaption.setGravity(Gravity.CENTER);
+                  bottomCaption.setPadding(4, 6, 4, 2);
+
+                  wrapper.addView(cardBox);
+                  wrapper.addView(bottomCaption);
+
+                  wrapper.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                      @Override
+                      public void onFocusChange(View v, boolean hasFocus) {
+                          cardBox.setBackground(hasFocus ? focusedBoxBg : normalBoxBg);
+                          bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.WHITE);
+                          v.animate().scaleX(hasFocus ? 1.09f : 1.0f).scaleY(hasFocus ? 1.09f : 1.0f).setDuration(120).start();
+                      }
+                  });
+
+                  wrapper.setOnClickListener(onClick);
+                  wrapper.setOnKeyListener(new View.OnKeyListener() {
+                      @Override
+                      public boolean onKey(View v, int keyCode, KeyEvent event) {
+                          if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) && event.getAction() == KeyEvent.ACTION_UP) {
+                              onClick.onClick(v);
+                              return true;
                           }
                           return false;
                       }
@@ -529,12 +874,12 @@ jobs:
                   pill.setTextColor(Color.WHITE);
                   pill.setTextSize(13);
                   pill.setTypeface(Typeface.DEFAULT_BOLD);
-                  pill.setPadding(22, 10, 22, 10);
+                  pill.setPadding(20, 9, 20, 9);
                   pill.setFocusable(true);
                   pill.setClickable(true);
 
                   final GradientDrawable normal = new GradientDrawable();
-                  normal.setColor(Color.parseColor("#550F172A"));
+                  normal.setColor(Color.parseColor("#440F172A"));
                   normal.setCornerRadius(24f);
                   normal.setStroke(2, Color.parseColor("#55FFFFFF"));
 
@@ -564,7 +909,7 @@ jobs:
 
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                           LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                  lp.setMargins(0, 0, 14, 0);
+                  lp.setMargins(0, 0, 12, 0);
                   pill.setLayoutParams(lp);
                   return pill;
               }
@@ -589,13 +934,6 @@ jobs:
                       Toast.makeText(this, "Ошибка запуска: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                   }
               }
-
-              private void openAppInfo(String pkg) {
-                  if (pkg == null) return;
-                  Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                  intent.setData(Uri.parse("package:" + pkg));
-                  startActivity(intent);
-              }
           }
           EOF
 
@@ -614,5 +952,5 @@ jobs:
       - name: Выгрузка готового APK
         uses: actions/upload-artifact@v4
         with:
-          name: philips-glass-ui-v7
+          name: philips-glass-ui-v8
           path: launcher.apk
