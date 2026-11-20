@@ -1,4 +1,4 @@
-name: Build Philips Glass UI v10
+name: Build Philips Glass UI v11
 
 on:
   push:
@@ -8,26 +8,26 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Сборка APK v10 с универсальным переназначением кнопок
+      - name: Сборка APK v11 (без лагов в YouTube и с универсальной привязкой)
         run: |
           mkdir -p src/com/custom/philipslauncher res/xml build/classes
 
           cat << 'EOF' > res/xml/key_service.xml
           <?xml version="1.0" encoding="utf-8"?>
           <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-              android:accessibilityEventTypes="typeAllMask"
+              android:accessibilityEventTypes="typeWindowStateChanged"
               android:accessibilityFeedbackType="feedbackGeneric"
-              android:accessibilityFlags="flagRequestFilterKeyEvents|flagIncludeNotImportantViews"
+              android:accessibilityFlags="flagRequestFilterKeyEvents"
               android:canRequestFilterKeyEvents="true"
-              android:notificationTimeout="20" />
+              android:notificationTimeout="100" />
           EOF
 
           cat << 'EOF' > AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="10"
-              android:versionName="10.0">
+              android:versionCode="11"
+              android:versionName="11.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="29" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -71,11 +71,9 @@ jobs:
           package com.custom.philipslauncher;
 
           import android.accessibilityservice.AccessibilityService;
-          import android.content.ComponentName;
           import android.content.Intent;
           import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
-          import android.content.pm.ResolveInfo;
           import android.view.KeyEvent;
           import android.view.accessibility.AccessibilityEvent;
 
@@ -84,10 +82,13 @@ jobs:
 
               @Override
               public void onAccessibilityEvent(AccessibilityEvent event) {
-                  if (event == null || event.getPackageName() == null) return;
-                  String pkg = event.getPackageName().toString();
+                  // Обрабатываем ТОЛЬКО смену активного окна — ноль нагрузки при наборе текста в YouTube
+                  if (event == null || event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
+                  CharSequence pkgCs = event.getPackageName();
+                  if (pkgCs == null) return;
+                  String pkg = pkgCs.toString();
+                  if (pkg.equals(getPackageName())) return;
 
-                  // Если кнопка (например, IVI) запускает пакет напрямую в обход кодов клавиш
                   if (waitingForKey && (pkg.equals("ru.ivi.client") || pkg.contains("netflix") || pkg.contains("rakuten") || pkg.contains("amazon") || pkg.contains("okko"))) {
                       waitingForKey = false;
                       Intent pick = new Intent(this, MainActivity.class);
@@ -98,18 +99,17 @@ jobs:
                       return;
                   }
 
-                  SharedPreferences prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
-                  String redirectedPkg = prefs.getString("bind_pkg:" + pkg, null);
-                  if (redirectedPkg != null && !redirectedPkg.isEmpty() && !redirectedPkg.equals(pkg)) {
-                      launchPackage(redirectedPkg);
-                      return;
-                  }
-
-                  // Защита от всплытия старого лаунчера
                   if (pkg.equals("com.google.android.tvlauncher") || pkg.equals("org.droidtv.tvlauncher")) {
                       Intent home = new Intent(this, MainActivity.class);
                       home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                       startActivity(home);
+                      return;
+                  }
+
+                  SharedPreferences prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
+                  String redirectedPkg = prefs.getString("bind_pkg:" + pkg, null);
+                  if (redirectedPkg != null && !redirectedPkg.isEmpty() && !redirectedPkg.equals(pkg)) {
+                      launchPackage(redirectedPkg);
                   }
               }
 
@@ -137,7 +137,6 @@ jobs:
                   int code = event.getKeyCode();
                   int scan = event.getScanCode();
 
-                  // Режим перехвата любой нажатой кнопки для привязки
                   if (waitingForKey) {
                       if (code == KeyEvent.KEYCODE_BACK) {
                           if (event.getAction() == KeyEvent.ACTION_UP) {
@@ -160,7 +159,6 @@ jobs:
                       return true;
                   }
 
-                  // Кнопка Домой всегда возвращает в наш лаунчер
                   if (code == KeyEvent.KEYCODE_HOME) {
                       if (event.getAction() == KeyEvent.ACTION_DOWN) {
                           Intent home = new Intent(this, MainActivity.class);
@@ -170,7 +168,6 @@ jobs:
                       return true;
                   }
 
-                  // Проверяем только те кнопки, которые пользователь привязал сам (Ambilight не трогаем!)
                   if (code != 0 || scan != 0) {
                       SharedPreferences prefs = getSharedPreferences("launcher_prefs", MODE_PRIVATE);
                       String keyId = code + ":" + scan;
@@ -260,6 +257,7 @@ jobs:
               private ImageView bgWallpaper;
               private AlertDialog waitingKeyDialog = null;
               private long lastLongPressTime = 0;
+              private boolean wallpaperLoaded = false;
 
               private static class AppEntry {
                   String label;
@@ -292,7 +290,7 @@ jobs:
               protected void onResume() {
                   super.onResume();
                   updateClock();
-                  loadCustomWallpaper();
+                  if (!wallpaperLoaded) loadCustomWallpaper();
                   scanInstalledApps();
                   renderFavoritesStrip();
                   checkIncomingKeyBind(getIntent());
@@ -364,7 +362,6 @@ jobs:
                   return super.dispatchKeyEvent(event);
               }
 
-              // ШАГ 1: Окно ожидания нажатия кнопки на пульте
               private void startUniversalKeyBind() {
                   String[] menuItems = new String[] {
                       "🎯 Нажать кнопку на пульте и выбрать приложение",
@@ -373,7 +370,7 @@ jobs:
                   };
 
                   AlertDialog.Builder menu = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-                  menu.setTitle("Управление кнопками пульта");
+                  menu.setTitle("Управление кнопками пульта (v11)");
                   menu.setItems(menuItems, new DialogInterface.OnClickListener() {
                       @Override
                       public void onClick(DialogInterface dialog, int which) {
@@ -424,7 +421,6 @@ jobs:
                   waitingKeyDialog.show();
               }
 
-              // ШАГ 2: Выбор любого приложения для нажатой кнопки
               private void showAppPickerForBoundKey(final String keyId, final String keyLabel) {
                   scanInstalledApps();
                   final String[] appNames = new String[allApps.size() + 1];
@@ -476,9 +472,19 @@ jobs:
                       for (String path : paths) {
                           File f = new File(path);
                           if (f.exists() && f.length() > 100) {
-                              Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath());
+                              BitmapFactory.Options opts = new BitmapFactory.Options();
+                              opts.inJustDecodeBounds = true;
+                              BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
+                              int sample = 1;
+                              while ((opts.outWidth / sample) > 1920 || (opts.outHeight / sample) > 1080) {
+                                  sample *= 2;
+                              }
+                              opts.inJustDecodeBounds = false;
+                              opts.inSampleSize = sample;
+                              Bitmap bmp = BitmapFactory.decodeFile(f.getAbsolutePath(), opts);
                               if (bmp != null) {
                                   bgWallpaper.setImageBitmap(bmp);
+                                  wallpaperLoaded = true;
                                   return;
                               }
                           }
@@ -1116,5 +1122,5 @@ jobs:
       - name: Выгрузка готового APK
         uses: actions/upload-artifact@v4
         with:
-          name: philips-glass-ui-v10
+          name: philips-glass-ui-v11
           path: launcher.apk
