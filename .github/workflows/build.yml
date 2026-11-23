@@ -1,4 +1,4 @@
-name: Build Philips Glass UI v11
+name: Build Philips Glass UI v12
 
 on:
   push:
@@ -8,7 +8,7 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     steps:
-      - name: Сборка APK v11 (без лагов в YouTube и с универсальной привязкой)
+      - name: Сборка APK v12 (сетка с иконками для добавления и привязки кнопок)
         run: |
           mkdir -p src/com/custom/philipslauncher res/xml build/classes
 
@@ -26,8 +26,8 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.custom.philipslauncher"
-              android:versionCode="11"
-              android:versionName="11.0">
+              android:versionCode="12"
+              android:versionName="12.0">
               <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="29" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -82,7 +82,6 @@ jobs:
 
               @Override
               public void onAccessibilityEvent(AccessibilityEvent event) {
-                  // Обрабатываем ТОЛЬКО смену активного окна — ноль нагрузки при наборе текста в YouTube
                   if (event == null || event.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
                   CharSequence pkgCs = event.getPackageName();
                   if (pkgCs == null) return;
@@ -253,7 +252,7 @@ jobs:
               private LinearLayout appsStrip;
               private FrameLayout allAppsOverlay;
               private GridLayout allAppsGrid;
-              private TextView topTimeView, topDateView;
+              private TextView topTimeView, topDateView, drawerTitle;
               private ImageView bgWallpaper;
               private AlertDialog waitingKeyDialog = null;
               private long lastLongPressTime = 0;
@@ -306,7 +305,7 @@ jobs:
                       if (waitingKeyDialog != null && waitingKeyDialog.isShowing()) {
                           try { waitingKeyDialog.dismiss(); } catch (Exception ignored) {}
                       }
-                      showAppPickerForBoundKey(keyId, keyLabel);
+                      showBindKeyAppsGrid(keyId, keyLabel);
                   }
               }
 
@@ -314,9 +313,7 @@ jobs:
               public void onBackPressed() {
                   if (allAppsOverlay != null && allAppsOverlay.getVisibility() == View.VISIBLE) {
                       allAppsOverlay.setVisibility(View.GONE);
-                      if (appsStrip.getChildCount() > 0) {
-                          appsStrip.getChildAt(0).requestFocus();
-                      }
+                      renderFavoritesStrip();
                   }
               }
 
@@ -342,7 +339,7 @@ jobs:
                                   waitingKeyDialog.dismiss();
                               }
                               String keyId = code + ":" + scan;
-                              showAppPickerForBoundKey(keyId, "Код " + code + " / Скан " + scan);
+                              showBindKeyAppsGrid(keyId, "Код " + code + " / Скан " + scan);
                           }
                           return true;
                       }
@@ -370,14 +367,14 @@ jobs:
                   };
 
                   AlertDialog.Builder menu = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-                  menu.setTitle("Управление кнопками пульта (v11)");
+                  menu.setTitle("Управление кнопками пульта (v12)");
                   menu.setItems(menuItems, new DialogInterface.OnClickListener() {
                       @Override
                       public void onClick(DialogInterface dialog, int which) {
                           if (which == 0) {
                               showWaitingForKeyDialog();
                           } else if (which == 1) {
-                              showAppPickerForBoundKey("pkg:ru.ivi.client", "Кнопка IVI");
+                              showBindKeyAppsGrid("pkg:ru.ivi.client", "Кнопка IVI");
                           } else if (which == 2) {
                               clearAllBoundKeys();
                           }
@@ -411,7 +408,7 @@ jobs:
                               if (event.getAction() == KeyEvent.ACTION_DOWN) {
                                   KeyInterceptService.waitingForKey = false;
                                   d.dismiss();
-                                  showAppPickerForBoundKey(keyCode + ":" + scan, "Код " + keyCode + " / Скан " + scan);
+                                  showBindKeyAppsGrid(keyCode + ":" + scan, "Код " + keyCode + " / Скан " + scan);
                               }
                               return true;
                           }
@@ -421,30 +418,42 @@ jobs:
                   waitingKeyDialog.show();
               }
 
-              private void showAppPickerForBoundKey(final String keyId, final String keyLabel) {
+              // Сетка с иконками для выбора приложения под кнопку пульта
+              private void showBindKeyAppsGrid(final String keyId, final String keyLabel) {
                   scanInstalledApps();
-                  final String[] appNames = new String[allApps.size() + 1];
-                  appNames[0] = "❌ Отключить привязку для этой кнопки";
-                  for (int i = 0; i < allApps.size(); i++) {
-                      appNames[i + 1] = allApps.get(i).label;
-                  }
+                  allAppsGrid.removeAllViews();
+                  drawerTitle.setText("Выберите приложение для кнопки (" + keyLabel + ")  •  Назад — отмена");
 
-                  AlertDialog.Builder picker = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-                  picker.setTitle("Выберите приложение для кнопки (" + keyLabel + "):");
-                  picker.setItems(appNames, new DialogInterface.OnClickListener() {
+                  View first = createGridActionTile("✕", "Отключить привязку", "#55EF4444", new View.OnClickListener() {
                       @Override
-                      public void onClick(DialogInterface dialog, int which) {
-                          if (which == 0) {
-                              prefs.edit().remove("bind_" + keyId).apply();
-                              Toast.makeText(MainActivity.this, "Привязка кнопки удалена", Toast.LENGTH_SHORT).show();
-                          } else {
-                              AppEntry chosen = allApps.get(which - 1);
-                              prefs.edit().putString("bind_" + keyId, chosen.pkg).apply();
-                              Toast.makeText(MainActivity.this, "Готово! Кнопка теперь открывает «" + chosen.label + "»", Toast.LENGTH_LONG).show();
-                          }
+                      public void onClick(View v) {
+                          prefs.edit().remove("bind_" + keyId).apply();
+                          allAppsOverlay.setVisibility(View.GONE);
+                          Toast.makeText(MainActivity.this, "Привязка кнопки удалена", Toast.LENGTH_SHORT).show();
+                          renderFavoritesStrip();
                       }
                   });
-                  picker.show();
+                  allAppsGrid.addView(first);
+
+                  for (final AppEntry app : allApps) {
+                      View card = createGlassAppCard(
+                          app.label, app.icon != null ? app.icon : app.banner, true,
+                          new View.OnClickListener() {
+                              @Override
+                              public void onClick(View v) {
+                                  prefs.edit().putString("bind_" + keyId, app.pkg).apply();
+                                  allAppsOverlay.setVisibility(View.GONE);
+                                  Toast.makeText(MainActivity.this, "Готово! Кнопка теперь открывает «" + app.label + "»", Toast.LENGTH_LONG).show();
+                                  renderFavoritesStrip();
+                              }
+                          },
+                          null
+                      );
+                      allAppsGrid.addView(card);
+                  }
+
+                  allAppsOverlay.setVisibility(View.VISIBLE);
+                  if (first != null) first.requestFocus();
               }
 
               private void clearAllBoundKeys() {
@@ -590,15 +599,15 @@ jobs:
                           FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
                   allAppsOverlay = new FrameLayout(this);
-                  allAppsOverlay.setBackgroundColor(Color.parseColor("#DD0B0F19"));
+                  allAppsOverlay.setBackgroundColor(Color.parseColor("#E00B0F19"));
                   allAppsOverlay.setVisibility(View.GONE);
 
                   LinearLayout drawerBox = new LinearLayout(this);
                   drawerBox.setOrientation(LinearLayout.VERTICAL);
                   drawerBox.setPadding(64, 48, 64, 48);
 
-                  TextView drawerTitle = new TextView(this);
-                  drawerTitle.setText("Все приложения (Нажмите OK для запуска • Нажмите Назад для выхода)");
+                  drawerTitle = new TextView(this);
+                  drawerTitle.setText("Все приложения (OK — запуск • Назад — выход)");
                   drawerTitle.setTextColor(Color.WHITE);
                   drawerTitle.setTextSize(20);
                   drawerTitle.setTypeface(Typeface.DEFAULT_BOLD);
@@ -760,7 +769,7 @@ jobs:
                   View addPlusCard = createActionCard("＋", "Добавить", "#4410B981", new View.OnClickListener() {
                       @Override
                       public void onClick(View v) {
-                          showAddAppDialog();
+                          showAddAppsGrid();
                       }
                   });
                   appsStrip.addView(addPlusCard);
@@ -779,41 +788,250 @@ jobs:
                   }
               }
 
-              private void showAddAppDialog() {
-                  final List<String> favPkgs = getSavedFavorites();
-                  final String[] names = new String[allApps.size()];
-                  final boolean[] checked = new boolean[allApps.size()];
+              // Красивая сетка стеклянных карточек с иконками и галочками для кнопки "+"
+              private void showAddAppsGrid() {
+                  scanInstalledApps();
+                  allAppsGrid.removeAllViews();
+                  drawerTitle.setText("Добавление на главный экран  •  OK — выбрать/убрать  •  Назад — готово");
 
-                  for (int i = 0; i < allApps.size(); i++) {
-                      names[i] = allApps.get(i).label;
-                      checked[i] = favPkgs.contains(allApps.get(i).pkg);
+                  List<String> favPkgs = getSavedFavorites();
+                  View first = null;
+                  for (final AppEntry app : allApps) {
+                      boolean isAdded = favPkgs.contains(app.pkg);
+                      View card = createSelectableGridCard(app, isAdded);
+                      allAppsGrid.addView(card);
+                      if (first == null) first = card;
                   }
 
-                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
-                  builder.setTitle("Выберите приложения для главного экрана:");
-                  builder.setMultiChoiceItems(names, checked, new DialogInterface.OnMultiChoiceClickListener() {
+                  allAppsOverlay.setVisibility(View.VISIBLE);
+                  if (first != null) first.requestFocus();
+              }
+
+              private View createSelectableGridCard(final AppEntry app, boolean initiallySelected) {
+                  final boolean[] selected = new boolean[] { initiallySelected };
+
+                  LinearLayout wrapper = new LinearLayout(this);
+                  wrapper.setOrientation(LinearLayout.VERTICAL);
+                  wrapper.setGravity(Gravity.CENTER_HORIZONTAL);
+                  wrapper.setFocusable(true);
+                  wrapper.setClickable(true);
+                  wrapper.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
+
+                  GridLayout.LayoutParams glp = new GridLayout.LayoutParams();
+                  glp.width = 240;
+                  glp.height = GridLayout.LayoutParams.WRAP_CONTENT;
+                  glp.setMargins(14, 14, 14, 14);
+                  wrapper.setLayoutParams(glp);
+
+                  final FrameLayout cardBox = new FrameLayout(this);
+                  cardBox.setLayoutParams(new LinearLayout.LayoutParams(214, 114));
+
+                  final GradientDrawable normalBg = new GradientDrawable();
+                  normalBg.setColor(Color.parseColor("#3D0F172A"));
+                  normalBg.setCornerRadius(16f);
+                  normalBg.setStroke(2, Color.parseColor("#55FFFFFF"));
+
+                  final GradientDrawable selectedNormalBg = new GradientDrawable();
+                  selectedNormalBg.setColor(Color.parseColor("#5510B981"));
+                  selectedNormalBg.setCornerRadius(16f);
+                  selectedNormalBg.setStroke(3, Color.parseColor("#34D399"));
+
+                  final GradientDrawable focusedBg = new GradientDrawable();
+                  focusedBg.setColor(Color.parseColor("#771E293B"));
+                  focusedBg.setCornerRadius(16f);
+                  focusedBg.setStroke(5, Color.parseColor("#FFD600"));
+
+                  final GradientDrawable selectedFocusedBg = new GradientDrawable();
+                  selectedFocusedBg.setColor(Color.parseColor("#7710B981"));
+                  selectedFocusedBg.setCornerRadius(16f);
+                  selectedFocusedBg.setStroke(5, Color.parseColor("#FFD600"));
+
+                  cardBox.setBackground(selected[0] ? selectedNormalBg : normalBg);
+
+                  LinearLayout inner = new LinearLayout(this);
+                  inner.setOrientation(LinearLayout.HORIZONTAL);
+                  inner.setGravity(Gravity.CENTER);
+                  inner.setPadding(16, 12, 16, 12);
+
+                  ImageView iconImg = new ImageView(this);
+                  iconImg.setImageDrawable(app.icon != null ? app.icon : app.banner);
+                  iconImg.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                  inner.addView(iconImg, new LinearLayout.LayoutParams(56, 56));
+
+                  TextView innerTitle = new TextView(this);
+                  innerTitle.setText(app.label);
+                  innerTitle.setTextColor(Color.WHITE);
+                  innerTitle.setShadowLayer(4f, 0f, 2f, Color.BLACK);
+                  innerTitle.setTextSize(14);
+                  innerTitle.setTypeface(Typeface.DEFAULT_BOLD);
+                  innerTitle.setMaxLines(2);
+                  innerTitle.setEllipsize(TextUtils.TruncateAt.END);
+                  innerTitle.setPadding(12, 0, 0, 0);
+                  inner.addView(innerTitle, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+                  cardBox.addView(inner, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+                  final TextView checkBadge = new TextView(this);
+                  checkBadge.setText("✓");
+                  checkBadge.setTextColor(Color.WHITE);
+                  checkBadge.setTextSize(14);
+                  checkBadge.setTypeface(Typeface.DEFAULT_BOLD);
+                  checkBadge.setGravity(Gravity.CENTER);
+                  GradientDrawable badgeBg = new GradientDrawable();
+                  badgeBg.setColor(Color.parseColor("#10B981"));
+                  badgeBg.setCornerRadius(14f);
+                  checkBadge.setBackground(badgeBg);
+                  checkBadge.setPadding(8, 2, 8, 2);
+                  checkBadge.setVisibility(selected[0] ? View.VISIBLE : View.GONE);
+
+                  FrameLayout.LayoutParams badgeLp = new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+                  badgeLp.gravity = Gravity.TOP | Gravity.END;
+                  badgeLp.setMargins(0, 6, 8, 0);
+                  cardBox.addView(checkBadge, badgeLp);
+
+                  final TextView bottomCaption = new TextView(this);
+                  bottomCaption.setText(app.label);
+                  bottomCaption.setTextColor(Color.WHITE);
+                  bottomCaption.setShadowLayer(6f, 0f, 2f, Color.BLACK);
+                  bottomCaption.setTextSize(12);
+                  bottomCaption.setSingleLine(true);
+                  bottomCaption.setEllipsize(TextUtils.TruncateAt.END);
+                  bottomCaption.setGravity(Gravity.CENTER);
+                  bottomCaption.setPadding(4, 6, 4, 2);
+
+                  wrapper.addView(cardBox);
+                  wrapper.addView(bottomCaption);
+
+                  wrapper.setOnFocusChangeListener(new View.OnFocusChangeListener() {
                       @Override
-                      public void onClick(DialogInterface dialog, int which, boolean isChecked) {
-                          String pkg = allApps.get(which).pkg;
-                          if (isChecked) {
-                              if (!favPkgs.contains(pkg)) favPkgs.add(pkg);
+                      public void onFocusChange(View v, boolean hasFocus) {
+                          cardBox.setBackground(hasFocus
+                              ? (selected[0] ? selectedFocusedBg : focusedBg)
+                              : (selected[0] ? selectedNormalBg : normalBg));
+                          bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.WHITE);
+                          bottomCaption.setTypeface(hasFocus ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+                          v.animate().scaleX(hasFocus ? 1.09f : 1.0f).scaleY(hasFocus ? 1.09f : 1.0f).setDuration(120).start();
+                      }
+                  });
+
+                  final View.OnClickListener toggleAction = new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          selected[0] = !selected[0];
+                          List<String> currentFavs = getSavedFavorites();
+                          if (selected[0]) {
+                              if (!currentFavs.contains(app.pkg)) currentFavs.add(app.pkg);
                           } else {
-                              favPkgs.remove(pkg);
+                              currentFavs.remove(app.pkg);
                           }
+                          saveFavorites(currentFavs);
+                          checkBadge.setVisibility(selected[0] ? View.VISIBLE : View.GONE);
+                          cardBox.setBackground(v.hasFocus()
+                              ? (selected[0] ? selectedFocusedBg : focusedBg)
+                              : (selected[0] ? selectedNormalBg : normalBg));
                       }
-                  });
-                  builder.setPositiveButton("Сохранить", new DialogInterface.OnClickListener() {
+                  };
+
+                  wrapper.setOnClickListener(toggleAction);
+                  wrapper.setOnKeyListener(new View.OnKeyListener() {
                       @Override
-                      public void onClick(DialogInterface dialog, int which) {
-                          saveFavorites(favPkgs);
-                          renderFavoritesStrip();
+                      public boolean onKey(View v, int keyCode, KeyEvent event) {
+                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                              if (event.getAction() == KeyEvent.ACTION_DOWN) return true;
+                              if (event.getAction() == KeyEvent.ACTION_UP) {
+                                  toggleAction.onClick(v);
+                                  return true;
+                              }
+                          }
+                          return false;
                       }
                   });
-                  builder.show();
+
+                  return wrapper;
+              }
+
+              private View createGridActionTile(String bigSymbol, String label, String tintHex, final View.OnClickListener onClick) {
+                  LinearLayout wrapper = new LinearLayout(this);
+                  wrapper.setOrientation(LinearLayout.VERTICAL);
+                  wrapper.setGravity(Gravity.CENTER_HORIZONTAL);
+                  wrapper.setFocusable(true);
+                  wrapper.setClickable(true);
+                  wrapper.setDescendantFocusability(LinearLayout.FOCUS_BLOCK_DESCENDANTS);
+
+                  GridLayout.LayoutParams glp = new GridLayout.LayoutParams();
+                  glp.width = 240;
+                  glp.height = GridLayout.LayoutParams.WRAP_CONTENT;
+                  glp.setMargins(14, 14, 14, 14);
+                  wrapper.setLayoutParams(glp);
+
+                  final FrameLayout cardBox = new FrameLayout(this);
+                  cardBox.setLayoutParams(new LinearLayout.LayoutParams(214, 114));
+
+                  final GradientDrawable normalBoxBg = new GradientDrawable();
+                  normalBoxBg.setColor(Color.parseColor(tintHex));
+                  normalBoxBg.setCornerRadius(16f);
+                  normalBoxBg.setStroke(2, Color.parseColor("#66FFFFFF"));
+
+                  final GradientDrawable focusedBoxBg = new GradientDrawable();
+                  focusedBoxBg.setColor(Color.parseColor("#88EF4444"));
+                  focusedBoxBg.setCornerRadius(16f);
+                  focusedBoxBg.setStroke(5, Color.parseColor("#FFD600"));
+
+                  cardBox.setBackground(normalBoxBg);
+
+                  TextView sym = new TextView(this);
+                  sym.setText(bigSymbol + "  " + label);
+                  sym.setTextColor(Color.WHITE);
+                  sym.setTextSize(15);
+                  sym.setTypeface(Typeface.DEFAULT_BOLD);
+                  sym.setGravity(Gravity.CENTER);
+                  cardBox.addView(sym, new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+                  final TextView bottomCaption = new TextView(this);
+                  bottomCaption.setText(label);
+                  bottomCaption.setTextColor(Color.WHITE);
+                  bottomCaption.setShadowLayer(6f, 0f, 2f, Color.BLACK);
+                  bottomCaption.setTextSize(12);
+                  bottomCaption.setGravity(Gravity.CENTER);
+                  bottomCaption.setPadding(4, 6, 4, 2);
+
+                  wrapper.addView(cardBox);
+                  wrapper.addView(bottomCaption);
+
+                  wrapper.setOnFocusChangeListener(new View.OnFocusChangeListener() {
+                      @Override
+                      public void onFocusChange(View v, boolean hasFocus) {
+                          cardBox.setBackground(hasFocus ? focusedBoxBg : normalBoxBg);
+                          bottomCaption.setTextColor(hasFocus ? Color.parseColor("#FFD600") : Color.WHITE);
+                          v.animate().scaleX(hasFocus ? 1.09f : 1.0f).scaleY(hasFocus ? 1.09f : 1.0f).setDuration(120).start();
+                      }
+                  });
+
+                  wrapper.setOnClickListener(onClick);
+                  wrapper.setOnKeyListener(new View.OnKeyListener() {
+                      @Override
+                      public boolean onKey(View v, int keyCode, KeyEvent event) {
+                          if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                              if (event.getAction() == KeyEvent.ACTION_DOWN) return true;
+                              if (event.getAction() == KeyEvent.ACTION_UP) {
+                                  onClick.onClick(v);
+                                  return true;
+                              }
+                          }
+                          return false;
+                      }
+                  });
+
+                  return wrapper;
               }
 
               private void showAllAppsDrawer() {
+                  scanInstalledApps();
                   allAppsGrid.removeAllViews();
+                  drawerTitle.setText("Все приложения  •  OK — запуск  •  Назад — выход");
                   View first = null;
                   for (final AppEntry app : allApps) {
                       View card = createGlassAppCard(
@@ -1122,5 +1340,5 @@ jobs:
       - name: Выгрузка готового APK
         uses: actions/upload-artifact@v4
         with:
-          name: philips-glass-ui-v11
+          name: philips-glass-ui-v12
           path: launcher.apk
